@@ -67,5 +67,3 @@ jobs:
           releaseBody: ${{ github.event.release.body }}
           releaseDraft: false
           prerelease: ${{ github.event.release.prerelease }}
-          args: --bundles all
-
