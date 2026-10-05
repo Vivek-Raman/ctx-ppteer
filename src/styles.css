@@ -18,15 +18,14 @@ html, body { width: 100%; height: 100%; margin: 0; background: var(--bg); color:
 body { overflow: hidden; }
 #app { display: flex; flex-direction: column; height: 100%; min-width: 280px; }
 .toolbar { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px; background: var(--panel); border-bottom: 1px solid var(--border); }
-.source-controls, .view-controls { display: flex; align-items: center; gap: 5px; min-width: 0; }
-.source-controls { flex: 1 1 250px; }
+.view-controls { display: flex; align-items: center; gap: 5px; min-width: 0; }
 .view-controls { flex: 0 0 auto; }
 button, input { font: inherit; color: inherit; }
 button { border: 1px solid var(--border); border-radius: 5px; background: var(--panel); padding: 4px 8px; cursor: pointer; }
 button:hover { border-color: var(--accent); }
 button[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
 .path-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }
-#source-path { min-width: 0; flex: 1; border: 1px solid var(--border); border-radius: 5px; padding: 5px 7px; background: var(--bg); }
+#source-path { width: 100%; border: 1px solid var(--border); border-radius: 5px; padding: 5px 7px; background: var(--bg); }
 .scale-control { display: flex; align-items: center; gap: 3px; color: var(--muted); }
 .scale-control input { width: 70px; }
 .statusbar { display: flex; gap: 6px; align-items: center; min-height: 26px; padding: 3px 10px; color: var(--muted); font-size: 12px; background: var(--bg); }
@@ -38,8 +37,9 @@ button[aria-pressed="true"] { color: var(--accent); border-color: var(--accent);
 .settings-content { max-width: 620px; padding: 18px 16px; }
 .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 14px 0; }
 .setting-row span { display: grid; gap: 4px; }.setting-row small { color: var(--muted); }.setting-row select { min-width: 120px; padding: 5px 7px; border: 1px solid var(--border); border-radius: 5px; background: var(--panel); color: var(--text); }
+.source-setting { align-items: flex-start; }.source-input { display: grid; gap: 7px; min-width: min(360px, 100%); }.source-actions { display: flex; flex-wrap: wrap; gap: 5px; }
 .document { flex: 1; overflow: auto; padding: 14px 16px 40px; outline: none; font-size: calc(1rem * var(--text-scale)); line-height: 1.5; user-select: text; }
 .document > :first-child { margin-top: 0; }.document h1, .document h2, .document h3 { line-height: 1.2; }.document h1 { font-size: 1.65em; }.document h2 { font-size: 1.35em; }.document h3 { font-size: 1.15em; }
 .document p, .document ul, .document ol, .document blockquote, .document pre, .document table { margin: 0 0 0.85em; }
 .document blockquote { margin-left: 0; padding-left: 12px; border-left: 3px solid var(--border); color: var(--muted); }.document code { padding: 2px 4px; border-radius: 3px; background: var(--code); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em; }.document pre { padding: 10px; border-radius: 5px; background: var(--code); overflow-x: auto; }.document pre code { padding: 0; background: transparent; }.document a { color: var(--accent); }.document table { border-collapse: collapse; display: block; overflow-x: auto; }.document th, .document td { border: 1px solid var(--border); padding: 4px 7px; text-align: left; white-space: nowrap; }.document th { background: var(--code); }.document input[type="checkbox"] { accent-color: var(--accent); margin-right: 5px; }.empty-state { color: var(--muted); max-width: 30em; margin: 18vh auto; text-align: center; }.empty-state h1 { color: var(--text); }
-@media (max-width: 560px) { .view-controls { width: 100%; justify-content: flex-end; } .toolbar { padding: 6px; } }
+@media (max-width: 560px) { .view-controls { width: 100%; justify-content: flex-end; } .toolbar { padding: 6px; } .setting-row { align-items: stretch; flex-direction: column; gap: 10px; } .source-input { min-width: 0; } }

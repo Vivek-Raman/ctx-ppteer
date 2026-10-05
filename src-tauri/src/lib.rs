@@ -6,6 +6,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
 const MAX_BYTES: u64 = 1024 * 1024;
+const DEFAULT_SOURCE_FILE: &str = "agent-status.md";
 
 #[derive(Clone, Serialize)]
 struct Snapshot { path: Option<String>, markdown: String, revision: u64, health: String, error: Option<String>, modified_at: Option<String> }
@@ -34,6 +35,12 @@ fn update(app: &AppHandle, state: &ViewerState) {
     let _ = app.emit("source-update", snapshot);
 }
 
+fn default_source_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let directory = app.path().app_data_dir().map_err(|e| format!("Unable to find the application data directory: {e}"))?;
+    fs::create_dir_all(&directory).map_err(|e| format!("Unable to create the application data directory: {e}"))?;
+    Ok(directory.join(DEFAULT_SOURCE_FILE))
+}
+
 fn start_watcher(app: AppHandle, state: Arc<ViewerState>) {
     thread::spawn(move || {
         let (tx, rx) = mpsc::channel();
@@ -54,6 +61,8 @@ fn start_watcher(app: AppHandle, state: Arc<ViewerState>) {
 
 #[tauri::command] fn get_snapshot(state: State<'_, Arc<ViewerState>>) -> Snapshot { state.snapshot.lock().unwrap().clone() }
 #[tauri::command] fn set_source(path: String, app: AppHandle, state: State<'_, Arc<ViewerState>>) -> Result<(), String> { if path.trim().is_empty() { return Err("A source path is required".into()); } state.path.lock().map_err(|_| "State unavailable")?.replace(PathBuf::from(path)); update(&app, &state); Ok(()) }
+#[tauri::command] fn use_default_source(app: AppHandle, state: State<'_, Arc<ViewerState>>) -> Result<(), String> { let path = default_source_path(&app)?; state.path.lock().map_err(|_| "State unavailable")?.replace(path); update(&app, &state); Ok(()) }
+#[tauri::command] fn get_default_source(app: AppHandle) -> Result<String, String> { Ok(default_source_path(&app)?.display().to_string()) }
 #[tauri::command] fn refresh_source(app: AppHandle, state: State<'_, Arc<ViewerState>>) { update(&app, &state); }
 #[tauri::command] fn set_pinned(pinned: bool, app: AppHandle) -> Result<(), String> { app.get_webview_window("main").ok_or("Main window unavailable")?.set_always_on_top(pinned).map_err(|e| e.to_string()) }
 #[tauri::command] async fn pick_source(app: AppHandle) -> Option<String> { app.dialog().file().add_filter("Markdown", &["md", "markdown", "txt"]).blocking_pick_file().map(|p| p.to_string()) }
@@ -61,5 +70,5 @@ fn start_watcher(app: AppHandle, state: Arc<ViewerState>) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let state = Arc::new(ViewerState { path: Mutex::new(None), snapshot: Mutex::new(Snapshot { path: None, markdown: String::new(), revision: 0, health: "waiting".into(), error: None, modified_at: None }) });
-    tauri::Builder::default().plugin(tauri_plugin_dialog::init()).manage(state.clone()).invoke_handler(tauri::generate_handler![get_snapshot, set_source, refresh_source, set_pinned, pick_source]).setup(|app| { start_watcher(app.handle().clone(), app.state::<Arc<ViewerState>>().inner().clone()); Ok(()) }).run(tauri::generate_context!()).expect("error while running Tauri application");
+    tauri::Builder::default().plugin(tauri_plugin_dialog::init()).manage(state.clone()).invoke_handler(tauri::generate_handler![get_snapshot, set_source, use_default_source, get_default_source, refresh_source, set_pinned, pick_source]).setup(|app| { let state = app.state::<Arc<ViewerState>>().inner().clone(); let path = default_source_path(app.handle()).map_err(|e| std::io::Error::other(e))?; state.path.lock().map_err(|_| std::io::Error::other("State unavailable"))?.replace(path); update(app.handle(), &state); start_watcher(app.handle().clone(), state); Ok(()) }).run(tauri::generate_context!()).expect("error while running Tauri application");
 }
