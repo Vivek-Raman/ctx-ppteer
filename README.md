@@ -2,7 +2,7 @@
 
 ctx-ppteer is a small Tauri desktop viewer for one aggregate Markdown file. It keeps the document visible in a compact always-on-top window and refreshes it when agents write changes.
 
-By default it watches `agent-status.md` in the operating system's app-data directory. Change the file from Settings when the status document lives elsewhere. The override is remembered. Use "Use default" there to remove it.
+By default it watches `agent-status.md` in the operating system's app-data directory. Use the Source menu to choose another file or restore the default. Appearance and always-on-top controls also live in the native menu bar, leaving the window for the Markdown itself.
 
 ## Development
 
