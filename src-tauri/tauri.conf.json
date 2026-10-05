@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Context Status",
+  "productName": "ctx-ppteer",
   "version": "0.1.0",
   "identifier": "com.ctxppteer.status",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Context Status",
+        "title": "ctx-ppteer",
         "width": 360,
         "height": 220,
         "minWidth": 260,

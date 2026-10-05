@@ -1,4 +1,4 @@
-name: Build release
+name: Release ctx-ppteer
 
 on:
   release:
@@ -63,7 +63,7 @@ jobs:
         with:
           tagName: ${{ github.event.release.tag_name }}
           releaseId: ${{ github.event.release.id }}
-          releaseName: ${{ github.event.release.name }}
+          releaseName: ctx-ppteer ${{ github.event.release.tag_name }}
           releaseBody: ${{ github.event.release.body }}
           releaseDraft: false
           prerelease: ${{ github.event.release.prerelease }}

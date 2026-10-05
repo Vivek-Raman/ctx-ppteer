@@ -1,6 +1,6 @@
-# Context Status
+# ctx-ppteer
 
-Context Status is a small Tauri desktop viewer for one aggregate Markdown file. It keeps the document visible in a compact always-on-top window and refreshes it when agents write changes.
+ctx-ppteer is a small Tauri desktop viewer for one aggregate Markdown file. It keeps the document visible in a compact always-on-top window and refreshes it when agents write changes.
 
 ## Development
 
