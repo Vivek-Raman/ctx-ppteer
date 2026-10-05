@@ -19,6 +19,11 @@ tauri = { version = "2.12", features = [] }
 tauri-plugin-dialog = "2.6"
 notify = "8"
 chrono = { version = "0.4", features = ["clock"] }
+rmcp = { version = "3.5.1", features = ["transport-io"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std"] }
+tempfile = "3"
+schemars = "1"
+toml_edit = "0.22"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]

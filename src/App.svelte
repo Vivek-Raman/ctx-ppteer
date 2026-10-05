@@ -8,7 +8,7 @@
   type Health = "waiting" | "current" | "stale" | "error";
   type Theme = "system" | "light" | "dark";
   type Snapshot = { path?: string; markdown?: string; revision?: number; health?: Health; error?: string };
-  type SkillInstallation = { installed: boolean; path: string };
+  type SkillInstallation = { installed: boolean; mcpRegistered: boolean; path: string };
   type Settings = { sourcePath: string; theme: Theme; textScale: number };
 
   const commands = { snapshot: "get_snapshot", choose: "pick_source", setSource: "set_source", useDefault: "use_default_source", pin: "set_pinned", settings: "get_settings", setAppearance: "set_appearance_settings", skillStatus: "get_skill_installation", installSkill: "install_skill" };
@@ -95,14 +95,14 @@
 
 <main>
   <div class="app-chrome" data-tauri-drag-region aria-hidden="true"></div>
-  {#if skill && !skill.installed}
+  {#if skill && (!skill.installed || !skill.mcpRegistered)}
     <aside class="skill-setup" aria-label="Skill setup">
       <div>
-        <strong>Connect an agent</strong>
-        <p>Install the ctx-ppteer skill so an agent can write status updates for this window.</p>
+        <strong>Set up agent integration</strong>
+        <p>Install the ctx-ppteer skill and register its status-writing tool.</p>
       </div>
       <button onclick={() => void installSkill()} disabled={installingSkill}>
-        {installingSkill ? "Installing…" : "Install skill"}
+        {installingSkill ? "Setting up…" : skill.installed ? "Repair integration" : "Set up agent integration"}
       </button>
       {#if skillError}<p class="skill-error">{skillError}</p>{/if}
     </aside>

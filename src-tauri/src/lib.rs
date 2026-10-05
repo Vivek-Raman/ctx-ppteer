@@ -1,9 +1,12 @@
 use chrono::{DateTime, Local};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Map, Value};
 use std::{
     fs,
     path::{Path, PathBuf},
+    process::Command,
+    str::FromStr,
     sync::{mpsc, Arc, Mutex},
     thread,
     time::{Duration, Instant},
@@ -14,6 +17,11 @@ use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, State, WebviewWindow, WindowEvent,
 };
 use tauri_plugin_dialog::DialogExt;
+use toml_edit::{value, Array, DocumentMut};
+
+pub mod mcp;
+pub mod settings;
+pub mod status_file;
 
 const MAX_BYTES: u64 = 1024 * 1024;
 const DEFAULT_SOURCE_FILE: &str = "agent-status.md";
@@ -65,7 +73,19 @@ struct ViewerState {
 #[derive(Serialize)]
 struct SkillInstallation {
     installed: bool,
+    mcp_registered: bool,
     path: String,
+    agents: Vec<AgentInstallation>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentInstallation {
+    name: &'static str,
+    skill_installed: bool,
+    mcp_registered: bool,
+    available: bool,
+    error: Option<String>,
 }
 
 fn read_snapshot(path: &Path, revision: u64, previous: &Snapshot) -> Snapshot {
@@ -253,6 +273,135 @@ fn skill_install_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(home.join(".agents").join("skills").join(SKILL_NAME))
 }
 
+fn home_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .home_dir()
+        .map_err(|e| format!("Unable to find the home directory: {e}"))
+}
+
+fn codex_config_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let home = home_dir(app)?;
+    Ok(home.join(".codex").join("config.toml"))
+}
+
+fn codex_mcp_registered(app: &AppHandle) -> Result<bool, String> {
+    let path = codex_config_path(app)?;
+    let contents = match fs::read_to_string(&path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(format!("Unable to read {}: {error}", path.display())),
+    };
+    let document = DocumentMut::from_str(&contents)
+        .map_err(|error| format!("Unable to read {}: {error}", path.display()))?;
+    Ok(document["mcp_servers"][SKILL_NAME].is_table())
+}
+
+fn register_codex_mcp(app: &AppHandle, executable: &Path) -> Result<(), String> {
+    let path = codex_config_path(app)?;
+    let directory = path
+        .parent()
+        .ok_or("Codex configuration directory unavailable")?;
+    fs::create_dir_all(directory)
+        .map_err(|error| format!("Unable to create {}: {error}", directory.display()))?;
+    let contents = match fs::read_to_string(&path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(format!("Unable to read {}: {error}", path.display())),
+    };
+    let mut document = DocumentMut::from_str(&contents)
+        .map_err(|error| format!("Unable to read {}: {error}", path.display()))?;
+    document["mcp_servers"][SKILL_NAME]["command"] =
+        value(executable.to_string_lossy().to_string());
+    document["mcp_servers"][SKILL_NAME]["args"] = value(Array::from_iter(["--mcp"]));
+    let temporary = path.with_extension("toml.tmp");
+    fs::write(&temporary, document.to_string())
+        .map_err(|error| format!("Unable to write {}: {error}", path.display()))?;
+    fs::rename(&temporary, &path)
+        .map_err(|error| format!("Unable to save {}: {error}", path.display()))
+}
+
+fn read_json_config(path: &Path) -> Result<Value, String> {
+    match fs::read(path) {
+        Ok(contents) => serde_json::from_slice(&contents)
+            .map_err(|error| format!("Unable to read {}: {error}", path.display())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(json!({})),
+        Err(error) => Err(format!("Unable to read {}: {error}", path.display())),
+    }
+}
+
+fn object_mut<'a>(value: &'a mut Value, label: &str) -> Result<&'a mut Map<String, Value>, String> {
+    value
+        .as_object_mut()
+        .ok_or_else(|| format!("{label} must contain a JSON object"))
+}
+
+fn nested_object_mut<'a>(
+    root: &'a mut Value,
+    keys: &[&str],
+    label: &str,
+) -> Result<&'a mut Map<String, Value>, String> {
+    let mut current = object_mut(root, label)?;
+    for key in keys {
+        let entry = current.entry(*key).or_insert_with(|| json!({}));
+        current = object_mut(entry, label)?;
+    }
+    Ok(current)
+}
+
+fn save_json_config(path: &Path, value: &Value) -> Result<(), String> {
+    let directory = path.parent().ok_or("Configuration directory unavailable")?;
+    fs::create_dir_all(directory)
+        .map_err(|error| format!("Unable to create {}: {error}", directory.display()))?;
+    let temporary = path.with_extension("json.tmp");
+    let contents = serde_json::to_vec_pretty(value)
+        .map_err(|error| format!("Unable to encode {}: {error}", path.display()))?;
+    fs::write(&temporary, contents)
+        .map_err(|error| format!("Unable to write {}: {error}", path.display()))?;
+    fs::rename(&temporary, path)
+        .map_err(|error| format!("Unable to save {}: {error}", path.display()))
+}
+
+fn register_standard_json_mcp(path: &Path, executable: &Path) -> Result<(), String> {
+    let mut config = read_json_config(path)?;
+    let servers = nested_object_mut(&mut config, &["mcpServers"], &path.display().to_string())?;
+    servers.insert(
+        SKILL_NAME.into(),
+        json!({ "command": executable, "args": ["--mcp"] }),
+    );
+    save_json_config(path, &config)
+}
+
+fn register_opencode_mcp(path: &Path, executable: &Path) -> Result<(), String> {
+    let mut config = read_json_config(path)?;
+    let servers = nested_object_mut(
+        &mut config,
+        &["mcp", "servers"],
+        &path.display().to_string(),
+    )?;
+    servers.insert(
+        SKILL_NAME.into(),
+        json!({ "type": "local", "command": [executable, "--mcp"], "codemode": false }),
+    );
+    save_json_config(path, &config)
+}
+
+fn json_mcp_registered(path: &Path, keys: &[&str]) -> Result<bool, String> {
+    let config = match fs::read(path) {
+        Ok(contents) => serde_json::from_slice::<Value>(&contents)
+            .map_err(|error| format!("Unable to read {}: {error}", path.display()))?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(format!("Unable to read {}: {error}", path.display())),
+    };
+    let mut value = &config;
+    for key in keys {
+        let Some(next) = value.get(key) else {
+            return Ok(false);
+        };
+        value = next;
+    }
+    Ok(value.get(SKILL_NAME).is_some())
+}
+
 fn copy_directory(source: &Path, destination: &Path) -> Result<(), String> {
     fs::create_dir_all(destination)
         .map_err(|e| format!("Unable to create {}: {e}", destination.display()))?;
@@ -270,6 +419,112 @@ fn copy_directory(source: &Path, destination: &Path) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn install_skill_at(source: &Path, destination: &Path) -> Result<bool, String> {
+    if destination.join("SKILL.md").is_file() {
+        return Ok(true);
+    }
+    if destination.exists() {
+        return Err(format!(
+            "{} already exists. Remove or rename it before installing the skill.",
+            destination.display()
+        ));
+    }
+    copy_directory(source, destination)?;
+    Ok(true)
+}
+
+fn integration_paths(app: &AppHandle) -> Result<Vec<(&'static str, PathBuf)>, String> {
+    let home = home_dir(app)?;
+    Ok(vec![
+        ("Agents", home.join(".agents/skills").join(SKILL_NAME)),
+        ("Codex", home.join(".codex/skills").join(SKILL_NAME)),
+        ("Claude Code", home.join(".claude/skills").join(SKILL_NAME)),
+        (
+            "Antigravity",
+            home.join(".gemini/antigravity-cli/skills").join(SKILL_NAME),
+        ),
+        (
+            "OpenCode",
+            home.join(".config/opencode/skills").join(SKILL_NAME),
+        ),
+    ])
+}
+
+fn install_claude_mcp(executable: &Path) -> Result<bool, String> {
+    let output = match Command::new("claude")
+        .args(["mcp", "add", SKILL_NAME, "--scope", "user", "--"])
+        .arg(executable)
+        .arg("--mcp")
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(format!("Unable to run Claude Code: {error}")),
+    };
+    if output.status.success() {
+        Ok(true)
+    } else {
+        Err(format!(
+            "Claude Code rejected the MCP configuration: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    }
+}
+
+fn bundled_skill_source(app: &AppHandle) -> Result<PathBuf, String> {
+    let source = app
+        .path()
+        .resolve(format!("skills/{SKILL_NAME}"), BaseDirectory::Resource)
+        .map_err(|e| format!("Unable to find the bundled skill: {e}"))?;
+    if !source.join("SKILL.md").is_file() {
+        return Err("The bundled skill is missing SKILL.md".into());
+    }
+    Ok(source)
+}
+
+fn integration_status(app: &AppHandle) -> Result<SkillInstallation, String> {
+    let home = home_dir(app)?;
+    let destination = skill_install_path(app)?;
+    let cursor_config = home.join(".cursor/mcp.json");
+    let agy_config = home.join(".gemini/config/mcp_config.json");
+    let opencode_config = home.join(".config/opencode/opencode.json");
+    let codex_registered = codex_mcp_registered(app)?;
+    let cursor_registered = json_mcp_registered(&cursor_config, &["mcpServers"])?;
+    let agy_registered = json_mcp_registered(&agy_config, &["mcpServers"])?;
+    let opencode_registered = json_mcp_registered(&opencode_config, &["mcp", "servers"])?;
+    let agents = integration_paths(app)?
+        .into_iter()
+        .map(|(name, path)| AgentInstallation {
+            name,
+            skill_installed: path.join("SKILL.md").is_file(),
+            mcp_registered: match name {
+                "Codex" => codex_registered,
+                "Antigravity" => agy_registered,
+                "OpenCode" => opencode_registered,
+                _ => false,
+            },
+            available: true,
+            error: None,
+        })
+        .chain(std::iter::once(AgentInstallation {
+            name: "Cursor",
+            skill_installed: false,
+            mcp_registered: cursor_registered,
+            available: true,
+            error: None,
+        }))
+        .collect();
+    Ok(SkillInstallation {
+        installed: destination.join("SKILL.md").is_file(),
+        mcp_registered: codex_registered
+            && cursor_registered
+            && agy_registered
+            && opencode_registered,
+        path: destination.display().to_string(),
+        agents,
+    })
 }
 
 fn start_watcher(app: AppHandle, state: Arc<ViewerState>) {
@@ -369,40 +624,41 @@ fn set_appearance_settings(theme: String, text_scale: f64, app: AppHandle) -> Re
 }
 #[tauri::command]
 fn get_skill_installation(app: AppHandle) -> Result<SkillInstallation, String> {
-    let path = skill_install_path(&app)?;
-    Ok(SkillInstallation {
-        installed: path.join("SKILL.md").is_file(),
-        path: path.display().to_string(),
-    })
+    integration_status(&app)
 }
 #[tauri::command]
 fn install_skill(app: AppHandle) -> Result<SkillInstallation, String> {
-    let destination = skill_install_path(&app)?;
-    if destination.join("SKILL.md").is_file() {
-        return Ok(SkillInstallation {
-            installed: true,
-            path: destination.display().to_string(),
-        });
-    }
-    if destination.exists() {
-        return Err(format!(
-            "{} already exists. Remove or rename it before installing the skill.",
-            destination.display()
-        ));
+    let source = bundled_skill_source(&app)?;
+    let executable = std::env::current_exe()
+        .map_err(|error| format!("Unable to locate the ctx-ppteer executable: {error}"))?;
+    for (_, destination) in integration_paths(&app)? {
+        install_skill_at(&source, &destination)?;
     }
 
-    let source = app
-        .path()
-        .resolve(format!("skills/{SKILL_NAME}"), BaseDirectory::Resource)
-        .map_err(|e| format!("Unable to find the bundled skill: {e}"))?;
-    if !source.join("SKILL.md").is_file() {
-        return Err("The bundled skill is missing SKILL.md".into());
+    register_codex_mcp(&app, &executable)?;
+    let home = home_dir(&app)?;
+    register_standard_json_mcp(&home.join(".cursor/mcp.json"), &executable)?;
+    register_standard_json_mcp(&home.join(".gemini/config/mcp_config.json"), &executable)?;
+    register_opencode_mcp(&home.join(".config/opencode/opencode.json"), &executable)?;
+
+    let claude_result = install_claude_mcp(&executable);
+    let mut result = integration_status(&app)?;
+    if let Some(claude) = result
+        .agents
+        .iter_mut()
+        .find(|agent| agent.name == "Claude Code")
+    {
+        match claude_result {
+            Ok(true) => claude.mcp_registered = true,
+            Ok(false) => {
+                claude.available = false;
+                claude.error =
+                    Some("Claude Code is not installed; its MCP tool was not registered.".into());
+            }
+            Err(error) => claude.error = Some(error),
+        }
     }
-    copy_directory(&source, &destination)?;
-    Ok(SkillInstallation {
-        installed: true,
-        path: destination.display().to_string(),
-    })
+    Ok(result)
 }
 #[tauri::command]
 fn set_pinned(pinned: bool, app: AppHandle) -> Result<(), String> {
@@ -461,6 +717,45 @@ fn install_menu(app: &tauri::App) -> tauri::Result<()> {
         }
     });
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn registers_standard_json_mcp_without_losing_existing_servers() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("mcp.json");
+        fs::write(
+            &path,
+            r#"{"mcpServers":{"existing":{"command":"existing"}}}"#,
+        )
+        .unwrap();
+
+        register_standard_json_mcp(&path, Path::new("/Applications/ctx-ppteer")).unwrap();
+
+        let config: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert!(config["mcpServers"]["existing"].is_object());
+        assert_eq!(config["mcpServers"][SKILL_NAME]["args"][0], "--mcp");
+    }
+
+    #[test]
+    fn registers_opencode_mcp_without_losing_existing_servers() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("opencode.json");
+        fs::write(
+            &path,
+            r#"{"mcp":{"servers":{"existing":{"type":"local"}}}}"#,
+        )
+        .unwrap();
+
+        register_opencode_mcp(&path, Path::new("/Applications/ctx-ppteer")).unwrap();
+
+        let config: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert!(config["mcp"]["servers"]["existing"].is_object());
+        assert_eq!(config["mcp"]["servers"][SKILL_NAME]["type"], "local");
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
