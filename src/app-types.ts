@@ -1,0 +1,38 @@
+export type Theme = "system" | "light" | "dark";
+
+export type Snapshot = {
+  markdown?: string;
+  revision?: number;
+};
+
+export type AgentInstallation = {
+  id: string;
+  name: string;
+  skillInstalled: boolean;
+  mcpRegistered: boolean;
+  available: boolean;
+  configPath: string;
+  error?: string;
+};
+
+export type SkillTarget = {
+  id: string;
+  name: string;
+  path: string;
+  installed: boolean;
+};
+
+export type SkillInstallation = {
+  installed: boolean;
+  mcpRegistered: boolean;
+  path: string;
+  targets: SkillTarget[];
+  agents: AgentInstallation[];
+};
+
+export type Settings = {
+  sourcePath: string;
+  theme: Theme;
+  textScale: number;
+  pinned: boolean;
+};
