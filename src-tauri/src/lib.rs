@@ -24,7 +24,7 @@ pub mod status_file;
 
 use app_settings::{
     default_source_path, ensure_default_source, load as load_settings, restore_window_state,
-    save as save_settings, save_window_state, Settings,
+    save as save_settings, save_window_state, Settings, PROJECT_DIRECTORY_ASC,
 };
 use app_state::{new_viewer_state, start_watcher, update, Snapshot, ViewerState};
 
@@ -787,6 +787,17 @@ fn set_appearance_settings(theme: String, text_scale: f64, app: AppHandle) -> Re
     Ok(())
 }
 #[tauri::command]
+fn set_project_sort_order(project_sort_order: String, app: AppHandle) -> Result<(), String> {
+    if project_sort_order != PROJECT_DIRECTORY_ASC {
+        return Err("Project sort order must be project-directory-asc".into());
+    }
+    let mut settings = load_settings(&app)?;
+    settings.project_sort_order = project_sort_order;
+    save_settings(&app, &settings)?;
+    let _ = app.emit("settings-update", settings);
+    Ok(())
+}
+#[tauri::command]
 fn get_skill_installation(app: AppHandle) -> Result<SkillInstallation, String> {
     integration_status(&app)
 }
@@ -896,6 +907,14 @@ fn set_pinned(pinned: bool, app: AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     let mut settings = load_settings(&app)?;
     settings.pinned = pinned;
+    save_settings(&app, &settings)?;
+    let _ = app.emit("settings-update", settings);
+    Ok(())
+}
+#[tauri::command]
+fn set_double_click_to_edit(double_click_to_edit: bool, app: AppHandle) -> Result<(), String> {
+    let mut settings = load_settings(&app)?;
+    settings.double_click_to_edit = double_click_to_edit;
     save_settings(&app, &settings)?;
     let _ = app.emit("settings-update", settings);
     Ok(())
@@ -1139,12 +1158,14 @@ pub fn run() {
             reveal_source,
             open_settings,
             set_appearance_settings,
+            set_project_sort_order,
             get_skill_installation,
             install_skill,
             install_skill_for_target,
             install_mcp_for_harness,
             uninstall_mcp_for_harness,
             set_pinned,
+            set_double_click_to_edit,
             pick_source
         ])
         .setup(|app| {

@@ -1,4 +1,5 @@
 export type Theme = "system" | "light" | "dark";
+export type ProjectSortOrder = "project-directory-asc";
 
 export type Snapshot = {
   markdown?: string;
@@ -38,4 +39,6 @@ export type Settings = {
   theme: Theme;
   textScale: number;
   pinned: boolean;
+  doubleClickToEdit: boolean;
+  projectSortOrder: ProjectSortOrder;
 };

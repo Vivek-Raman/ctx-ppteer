@@ -58,8 +58,15 @@ impl StatusServer {
     ) -> Result<String, McpError> {
         let path =
             settings::source_path().map_err(|error| McpError::internal_error(error, None))?;
-        let bytes = status_file::write_project_status(&path, &folder_name, &status)
+        let sort_order = settings::project_sort_order()
             .map_err(|error| McpError::internal_error(error, None))?;
+        let bytes = status_file::write_project_status_with_sort_order(
+            &path,
+            &folder_name,
+            &status,
+            &sort_order,
+        )
+        .map_err(|error| McpError::internal_error(error, None))?;
         Ok(format!("Updated {folder_name} status ({bytes} bytes)."))
     }
 }

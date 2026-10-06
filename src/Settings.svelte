@@ -22,6 +22,20 @@
     catch (error) { settingsError = error instanceof Error ? error.message : String(error); }
     finally { saving = false; }
   }
+  async function saveProjectSortOrder() {
+    if (!settings) return;
+    saving = true; settingsError = "";
+    try { await command("set_project_sort_order", { projectSortOrder: settings.projectSortOrder }); }
+    catch (error) { settingsError = error instanceof Error ? error.message : String(error); }
+    finally { saving = false; }
+  }
+  async function saveDoubleClickToEdit() {
+    if (!settings) return;
+    saving = true; settingsError = "";
+    try { await command("set_double_click_to_edit", { doubleClickToEdit: settings.doubleClickToEdit }); }
+    catch (error) { settingsError = error instanceof Error ? error.message : String(error); }
+    finally { saving = false; }
+  }
   async function installSkill(target: string) {
     installingSkill = target; skillError = "";
     try { skill = await command<SkillInstallation>("install_skill_for_target", { target }); }
@@ -56,7 +70,8 @@
   {#if settings}
     <section><label for="source">Markdown file</label><div class="file-picker"><input id="source" value={settings.sourcePath} readonly title={settings.sourcePath} /><button onclick={() => void chooseFile()}>Choose…</button></div><div class="source-actions"><button class="link-button" onclick={() => void useDefaultFile()}>Use default file</button><button class="link-button" onclick={() => void command("reveal_source")}>Reveal in file manager</button></div></section>
     <section class="appearance"><label for="theme">Theme</label><select id="theme" bind:value={settings.theme} onchange={() => void saveAppearance()}><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select><label for="text-size">Text size</label><select id="text-size" bind:value={settings.textScale} onchange={() => void saveAppearance()}><option value={0.85}>Small</option><option value={1}>Default</option><option value={1.15}>Large</option><option value={1.35}>Extra large</option></select></section>
-    <section><label class="checkbox"><input type="checkbox" bind:checked={settings.pinned} onchange={() => void saveAppearance()} /> Keep viewer always on top</label></section>
+    <section><label for="project-sort-order">Project note order</label><select id="project-sort-order" bind:value={settings.projectSortOrder} onchange={() => void saveProjectSortOrder()}><option value="project-directory-asc">Project directory A-Z</option></select></section>
+    <section><label class="checkbox"><input type="checkbox" bind:checked={settings.pinned} onchange={() => void saveAppearance()} /> Keep viewer always on top</label><label class="checkbox"><input type="checkbox" bind:checked={settings.doubleClickToEdit} onchange={() => void saveDoubleClickToEdit()} /> Double-click text to edit</label></section>
     <section class="integration"><div><h2>Agent integration</h2><p>Install the bundled skill into the locations used by each agent, then configure MCP separately when needed.</p></div>
       {#if skill}
         <div class="skill-targets" aria-label="Skill installation targets">{#each skill.targets as target}<div class="skill-target"><div><span>{target.name}</span><small>{target.path}</small></div><span class:installed={target.installed}>{target.installed ? target.upToDate ? "Skill installed" : "Skill update available" : "Skill not installed"}</span><button onclick={() => void installSkill(target.id)} disabled={installingSkill !== null}>{installingSkill === target.id ? "Installing…" : !target.installed ? "Install skill" : target.upToDate ? "Reinstall" : "Update skill"}</button></div>{/each}</div>

@@ -9,6 +9,18 @@ pub fn read_project_status(path: &Path, folder_name: &str) -> Result<Option<Stri
 }
 
 pub fn write_project_status(path: &Path, folder_name: &str, status: &str) -> Result<usize, String> {
+    write_project_status_with_sort_order(path, folder_name, status, "project-directory-asc")
+}
+
+pub fn write_project_status_with_sort_order(
+    path: &Path,
+    folder_name: &str,
+    status: &str,
+    sort_order: &str,
+) -> Result<usize, String> {
+    if sort_order != "project-directory-asc" {
+        return Err(format!("Unsupported project sort order: {sort_order}"));
+    }
     let title = project_title(folder_name)?;
     if status.trim().is_empty() {
         return Err("The status text cannot be empty".into());
@@ -34,7 +46,7 @@ pub fn write_project_status(path: &Path, folder_name: &str, status: &str) -> Res
     } else {
         format!("{}\n\n{section}", markdown.trim_end())
     };
-    write_markdown(path, &updated)
+    write_markdown(path, &sort_project_sections(&updated))
 }
 
 fn read_markdown(path: &Path) -> Result<String, String> {
@@ -80,6 +92,37 @@ fn project_section_range(markdown: &str, title: &str) -> Option<(usize, usize)> 
         offset += raw_line.len();
     }
     start.map(|start| (start, markdown.len()))
+}
+
+fn sort_project_sections(markdown: &str) -> String {
+    let Some(first_section) = markdown.find("## ") else {
+        return markdown.to_owned();
+    };
+
+    let (preamble, sections) = markdown.split_at(first_section);
+    let mut sections = sections
+        .split("\n## ")
+        .enumerate()
+        .map(|(index, section)| {
+            let section = section.trim_end();
+            if index == 0 {
+                section.to_owned()
+            } else {
+                format!("## {section}")
+            }
+        })
+        .collect::<Vec<_>>();
+
+    sections.sort_unstable_by_key(|section| {
+        section
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .trim_start_matches("## ")
+            .to_lowercase()
+    });
+
+    format!("{}{}\n", preamble, sections.join("\n\n"))
 }
 
 pub fn write_markdown(path: &Path, markdown: &str) -> Result<usize, String> {
@@ -165,6 +208,21 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(path).unwrap(),
             "## myAPI-tool_v2\n\nmain\n"
+        );
+    }
+
+    #[test]
+    fn sorts_project_sections_by_folder_name() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("status.md");
+
+        write_project_status(&path, "zebra", "main").unwrap();
+        write_project_status(&path, "Alpha", "main").unwrap();
+        write_project_status(&path, "middle", "main").unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(path).unwrap(),
+            "## Alpha\n\nmain\n\n## middle\n\nmain\n\n## zebra\n\nmain\n"
         );
     }
 }

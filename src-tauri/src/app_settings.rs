@@ -5,6 +5,7 @@ use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
 const DEFAULT_SOURCE_FILE: &str = "agent-status.md";
 const SETTINGS_DIRECTORY: &str = ".config/ctx-ppteer";
 const SETTINGS_FILE: &str = "settings.json";
+pub const PROJECT_DIRECTORY_ASC: &str = "project-directory-asc";
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct WindowState {
@@ -29,6 +30,10 @@ pub struct Settings {
     pub text_scale: f64,
     #[serde(default = "default_pinned")]
     pub pinned: bool,
+    #[serde(default = "default_double_click_to_edit")]
+    pub double_click_to_edit: bool,
+    #[serde(default = "default_project_sort_order")]
+    pub project_sort_order: String,
     #[serde(default)]
     pub window: Option<WindowState>,
 }
@@ -41,6 +46,12 @@ fn default_text_scale() -> f64 {
 }
 fn default_pinned() -> bool {
     true
+}
+fn default_double_click_to_edit() -> bool {
+    true
+}
+fn default_project_sort_order() -> String {
+    PROJECT_DIRECTORY_ASC.into()
 }
 
 pub fn default_source_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -76,6 +87,8 @@ fn default_settings(app: &AppHandle) -> Result<Settings, String> {
         theme: default_theme(),
         text_scale: default_text_scale(),
         pinned: default_pinned(),
+        double_click_to_edit: default_double_click_to_edit(),
+        project_sort_order: default_project_sort_order(),
         window: None,
     })
 }
@@ -223,5 +236,13 @@ mod tests {
         assert_eq!(value["width"], 800);
         assert_eq!(value["height"], 600);
         assert_eq!(value["maximized"], true);
+    }
+
+    #[test]
+    fn defaults_project_sort_order_for_existing_settings() {
+        let settings: Settings =
+            serde_json::from_str(r#"{"sourcePath":"/tmp/status.md"}"#).unwrap();
+
+        assert_eq!(settings.project_sort_order, PROJECT_DIRECTORY_ASC);
     }
 }

@@ -29,6 +29,9 @@
   }
   function updateSelection() { selectedText = Boolean(document.getSelection()?.toString()); if (!selectedText && pending) applySnapshot(pending); }
   function startEditing() { editing = true; saveError = ""; }
+  function handleDocumentDoubleClick() {
+    if (settings?.doubleClickToEdit ?? true) startEditing();
+  }
   function cancelEditing() {
     editing = false;
     saveError = "";
@@ -94,7 +97,7 @@
       {#if saveError}<p class="save-error" role="alert">{saveError}</p>{/if}
     </section>
   {:else}
-    <section class="document" aria-label="Markdown document" onselectstart={() => selectedText = true}>{@html documentHtml}</section>
+    <section class="document" aria-label="Markdown document" onselectstart={() => selectedText = true} ondblclick={handleDocumentDoubleClick}>{@html documentHtml}</section>
   {/if}
 </main>
 
