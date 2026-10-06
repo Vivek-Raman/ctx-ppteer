@@ -627,7 +627,7 @@ fn show_settings_window(app: &AppHandle) {
     let _ = WebviewWindowBuilder::new(
         app,
         "settings",
-        WebviewUrl::App("index.html?settings".into()),
+        WebviewUrl::App("index.html#/settings".into()),
     )
     .title("ctx-ppteer Settings")
     .inner_size(520.0, 430.0)

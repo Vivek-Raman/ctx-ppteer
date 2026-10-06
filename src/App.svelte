@@ -1,13 +1,12 @@
 <script lang="ts">
-  import { getCurrentWindow } from "@tauri-apps/api/window";
+  import Router from "svelte-spa-router";
   import Settings from "./Settings.svelte";
   import Viewer from "./Viewer.svelte";
 
-  const isSettings = getCurrentWindow().label === "settings";
+  const routes = {
+    "/": Viewer,
+    "/settings": Settings,
+  };
 </script>
 
-{#if isSettings}
-  <Settings />
-{:else}
-  <Viewer />
-{/if}
+<Router {routes} />
