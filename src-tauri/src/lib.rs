@@ -96,7 +96,7 @@ fn document_has_codex_mcp(document: &DocumentMut) -> bool {
         .get("mcp_servers")
         .and_then(|item| item.as_table())
         .and_then(|servers| servers.get(SKILL_NAME))
-        .is_some_and(|item| item.is_table())
+        .is_some_and(|item| item.is_table() || item.is_inline_table())
 }
 
 fn register_codex_mcp(app: &AppHandle, executable: &Path) -> Result<(), String> {
@@ -693,6 +693,18 @@ mod tests {
         let document = DocumentMut::from_str("").unwrap();
 
         assert!(!document_has_codex_mcp(&document));
+    }
+
+    #[test]
+    fn recognizes_inline_codex_mcp_server() {
+        let document = DocumentMut::from_str(
+            r#"[mcp_servers]
+ctx-ppteer = { command = "/Applications/ctx-ppteer", args = ["--mcp"] }
+"#,
+        )
+        .unwrap();
+
+        assert!(document_has_codex_mcp(&document));
     }
 }
 
