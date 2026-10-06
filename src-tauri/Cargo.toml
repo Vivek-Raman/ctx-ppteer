@@ -30,3 +30,7 @@ toml_edit = "0.22"
 [features]
 custom-protocol = ["tauri/custom-protocol"]
 default = ["custom-protocol"]
+
+[profile.dev]
+debug = 0
+incremental = false
