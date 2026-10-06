@@ -23,6 +23,7 @@ rmcp = { version = "3.5.1", features = ["transport-io"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std"] }
 tempfile = "3"
 schemars = "1"
+sha2 = "0.10"
 toml_edit = "0.22"
 
 [features]

@@ -20,6 +20,7 @@ export type SkillTarget = {
   name: string;
   path: string;
   installed: boolean;
+  upToDate: boolean;
 };
 
 export type SkillInstallation = {
@@ -27,7 +28,9 @@ export type SkillInstallation = {
   mcpRegistered: boolean;
   path: string;
   targets: SkillTarget[];
+  additionalTargets: SkillTarget[];
   agents: AgentInstallation[];
+  additionalAgents: AgentInstallation[];
 };
 
 export type Settings = {

@@ -1,5 +1,6 @@
 use serde::Serialize;
 use serde_json::{json, Map, Value};
+use sha2::{Digest, Sha256};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -35,23 +36,26 @@ struct SkillInstallation {
     mcp_registered: bool,
     path: String,
     targets: Vec<SkillTarget>,
+    additional_targets: Vec<SkillTarget>,
     agents: Vec<AgentInstallation>,
+    additional_agents: Vec<AgentInstallation>,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SkillTarget {
-    id: &'static str,
-    name: &'static str,
+    id: String,
+    name: String,
     path: String,
     installed: bool,
+    up_to_date: bool,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AgentInstallation {
-    id: &'static str,
-    name: &'static str,
+    id: String,
+    name: String,
     skill_installed: bool,
     mcp_registered: bool,
     available: bool,
@@ -78,8 +82,7 @@ fn codex_config_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(home.join(".codex").join("config.toml"))
 }
 
-fn codex_mcp_registered(app: &AppHandle) -> Result<bool, String> {
-    let path = codex_config_path(app)?;
+fn codex_mcp_registered_at(path: &Path) -> Result<bool, String> {
     let contents = match fs::read_to_string(&path) {
         Ok(contents) => contents,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
@@ -88,6 +91,10 @@ fn codex_mcp_registered(app: &AppHandle) -> Result<bool, String> {
     let document = DocumentMut::from_str(&contents)
         .map_err(|error| format!("Unable to read {}: {error}", path.display()))?;
     Ok(document_has_codex_mcp(&document))
+}
+
+fn codex_mcp_registered(app: &AppHandle) -> Result<bool, String> {
+    codex_mcp_registered_at(&codex_config_path(app)?)
 }
 
 fn document_has_codex_mcp(document: &DocumentMut) -> bool {
@@ -99,8 +106,7 @@ fn document_has_codex_mcp(document: &DocumentMut) -> bool {
         .is_some_and(|item| item.is_table() || item.is_inline_table())
 }
 
-fn register_codex_mcp(app: &AppHandle, executable: &Path) -> Result<(), String> {
-    let path = codex_config_path(app)?;
+fn register_codex_mcp_at(path: &Path, executable: &Path) -> Result<(), String> {
     let directory = path
         .parent()
         .ok_or("Codex configuration directory unavailable")?;
@@ -121,6 +127,10 @@ fn register_codex_mcp(app: &AppHandle, executable: &Path) -> Result<(), String> 
         .map_err(|error| format!("Unable to write {}: {error}", path.display()))?;
     fs::rename(&temporary, &path)
         .map_err(|error| format!("Unable to save {}: {error}", path.display()))
+}
+
+fn register_codex_mcp(app: &AppHandle, executable: &Path) -> Result<(), String> {
+    register_codex_mcp_at(&codex_config_path(app)?, executable)
 }
 
 fn read_json_config(path: &Path) -> Result<Value, String> {
@@ -230,8 +240,50 @@ fn copy_directory(source: &Path, destination: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn skill_hash(path: &Path) -> Result<String, String> {
+    fn hash_directory(root: &Path, directory: &Path, hasher: &mut Sha256) -> Result<(), String> {
+        let mut entries = fs::read_dir(directory)
+            .map_err(|error| format!("Unable to read {}: {error}", directory.display()))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("Unable to read {}: {error}", directory.display()))?;
+        entries.sort_by_key(|entry| entry.file_name());
+
+        for entry in entries {
+            let path = entry.path();
+            let relative = path
+                .strip_prefix(root)
+                .map_err(|error| format!("Unable to hash {}: {error}", path.display()))?;
+            let relative = relative.to_string_lossy();
+            let file_type = entry
+                .file_type()
+                .map_err(|error| format!("Unable to inspect {}: {error}", path.display()))?;
+            if file_type.is_dir() {
+                hasher.update(b"directory\0");
+                hasher.update(relative.as_bytes());
+                hasher.update(b"\0");
+                hash_directory(root, &path, hasher)?;
+            } else if file_type.is_file() {
+                hasher.update(b"file\0");
+                hasher.update(relative.as_bytes());
+                hasher.update(b"\0");
+                hasher.update(
+                    fs::read(&path)
+                        .map_err(|error| format!("Unable to read {}: {error}", path.display()))?,
+                );
+            }
+        }
+        Ok(())
+    }
+
+    let mut hasher = Sha256::new();
+    hash_directory(path, path, &mut hasher)?;
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
 fn install_skill_at(source: &Path, destination: &Path) -> Result<bool, String> {
     if destination.join("SKILL.md").is_file() {
+        fs::remove_dir_all(destination)
+            .map_err(|error| format!("Unable to replace {}: {error}", destination.display()))?;
         copy_directory(source, destination)?;
         return Ok(true);
     }
@@ -281,7 +333,90 @@ fn skill_targets(app: &AppHandle) -> Result<Vec<(&'static str, &'static str, Pat
     ])
 }
 
+fn prefixed_harness_directories(home: &Path, prefix: &str) -> Vec<PathBuf> {
+    let mut directories = fs::read_dir(home)
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let path = entry.path();
+            let name = entry.file_name();
+            let name = name.to_str()?;
+            (path.is_dir() && name.starts_with(prefix) && name.len() > prefix.len()).then_some(path)
+        })
+        .collect::<Vec<_>>();
+    directories.sort();
+    directories
+}
+
+fn additional_codex_skill_targets(home: &Path) -> Vec<SkillTarget> {
+    prefixed_harness_directories(home, ".codex-")
+        .into_iter()
+        .map(|directory| SkillTarget {
+            id: format!("codex:{}", directory.display()),
+            name: format!(
+                "Codex ({})",
+                directory.file_name().unwrap().to_string_lossy()
+            ),
+            path: directory
+                .join("skills")
+                .join(SKILL_NAME)
+                .display()
+                .to_string(),
+            installed: directory
+                .join("skills")
+                .join(SKILL_NAME)
+                .join("SKILL.md")
+                .is_file(),
+            up_to_date: false,
+        })
+        .collect()
+}
+
+fn additional_codex_agents(home: &Path) -> Vec<AgentInstallation> {
+    prefixed_harness_directories(home, ".codex-")
+        .into_iter()
+        .map(|directory| {
+            let config_path = directory.join("config.toml");
+            let (mcp_registered, error) = match codex_mcp_registered_at(&config_path) {
+                Ok(registered) => (registered, None),
+                Err(error) => (false, Some(error)),
+            };
+            AgentInstallation {
+                id: format!("codex:{}", directory.display()),
+                name: format!(
+                    "Codex ({})",
+                    directory.file_name().unwrap().to_string_lossy()
+                ),
+                skill_installed: directory
+                    .join("skills")
+                    .join(SKILL_NAME)
+                    .join("SKILL.md")
+                    .is_file(),
+                mcp_registered,
+                available: true,
+                config_path: config_path.display().to_string(),
+                error,
+            }
+        })
+        .collect()
+}
+
 fn skill_target(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
+    if let Some(directory) = id.strip_prefix("codex:") {
+        let home = home_dir(app)?;
+        let directory = PathBuf::from(directory);
+        if directory.parent() == Some(home.as_path())
+            && directory.is_dir()
+            && directory
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with(".codex-"))
+        {
+            return Ok(directory.join("skills").join(SKILL_NAME));
+        }
+    }
     skill_targets(app)?
         .into_iter()
         .find(|(candidate, _, _)| *candidate == id)
@@ -343,15 +478,28 @@ fn integration_status(app: &AppHandle) -> Result<SkillInstallation, String> {
     let agy_config = home.join(".gemini/config/mcp_config.json");
     let opencode_config = home.join(".config/opencode/opencode.json");
     let claude_config = home.join(".claude.json");
+    let bundled_skill = bundled_skill_source(app)?;
+    let bundled_hash = skill_hash(&bundled_skill)?;
     let targets = skill_targets(app)?
         .into_iter()
         .map(|(id, name, path)| SkillTarget {
-            id,
-            name,
+            id: id.into(),
+            name: name.into(),
             installed: path.join("SKILL.md").is_file(),
+            up_to_date: path.join("SKILL.md").is_file()
+                && skill_hash(&path)
+                    .map(|installed_hash| installed_hash == bundled_hash)
+                    .unwrap_or(false),
             path: path.display().to_string(),
         })
         .collect::<Vec<_>>();
+    let mut additional_targets = additional_codex_skill_targets(&home);
+    for target in &mut additional_targets {
+        target.up_to_date = target.installed
+            && skill_hash(Path::new(&target.path))
+                .map(|installed_hash| installed_hash == bundled_hash)
+                .unwrap_or(false);
+    }
     let candidates = [
         (
             "codex",
@@ -393,8 +541,8 @@ fn integration_status(app: &AppHandle) -> Result<SkillInstallation, String> {
                 Err(error) => (false, Some(error)),
             };
             AgentInstallation {
-                id,
-                name,
+                id: id.into(),
+                name: name.into(),
                 skill_installed: targets
                     .iter()
                     .find(|target| target.name == name)
@@ -406,12 +554,15 @@ fn integration_status(app: &AppHandle) -> Result<SkillInstallation, String> {
             }
         })
         .collect::<Vec<_>>();
+    let additional_agents = additional_codex_agents(&home);
     Ok(SkillInstallation {
         installed: destination.join("SKILL.md").is_file(),
         mcp_registered: !agents.is_empty() && agents.iter().all(|agent| agent.mcp_registered),
         path: destination.display().to_string(),
         targets,
+        additional_targets,
         agents,
+        additional_agents,
     })
 }
 
@@ -556,6 +707,19 @@ fn install_mcp_for_harness(harness: String, app: AppHandle) -> Result<SkillInsta
     let executable = std::env::current_exe()
         .map_err(|error| format!("Unable to locate the ctx-ppteer executable: {error}"))?;
     let home = home_dir(&app)?;
+    if let Some(directory) = harness.strip_prefix("codex:") {
+        let directory = PathBuf::from(directory);
+        if directory.parent() == Some(home.as_path())
+            && directory.is_dir()
+            && directory
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with(".codex-"))
+        {
+            register_codex_mcp_at(&directory.join("config.toml"), &executable)?;
+            return integration_status(&app);
+        }
+    }
     if !harness_available(&harness, &home) {
         return Err(format!("{harness} was not found on this computer"));
     }
@@ -640,6 +804,38 @@ fn show_settings_window(app: &AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hashes_skill_contents_and_paths() {
+        let directory = tempfile::tempdir().unwrap();
+        let skill = directory.path().join("skill");
+        fs::create_dir_all(skill.join("nested")).unwrap();
+        fs::write(skill.join("SKILL.md"), "initial").unwrap();
+        fs::write(skill.join("nested/notes.md"), "notes").unwrap();
+
+        let original = skill_hash(&skill).unwrap();
+        fs::write(skill.join("nested/notes.md"), "updated notes").unwrap();
+        assert_ne!(original, skill_hash(&skill).unwrap());
+        fs::rename(skill.join("nested"), skill.join("renamed")).unwrap();
+        assert_ne!(original, skill_hash(&skill).unwrap());
+    }
+
+    #[test]
+    fn finds_only_suffixed_codex_directories() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::create_dir_all(directory.path().join(".codex")).unwrap();
+        fs::create_dir_all(directory.path().join(".codex-zeta")).unwrap();
+        fs::create_dir_all(directory.path().join(".codex-work")).unwrap();
+        fs::write(directory.path().join(".codex-file"), "not a directory").unwrap();
+
+        let found = prefixed_harness_directories(directory.path(), ".codex-");
+        let names = found
+            .iter()
+            .map(|path| path.file_name().unwrap().to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(names, [".codex-work", ".codex-zeta"]);
+    }
 
     #[test]
     fn registers_standard_json_mcp_without_losing_existing_servers() {

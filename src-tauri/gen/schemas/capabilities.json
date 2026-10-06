@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"Core permissions for the main status viewer window","local":true,"windows":["main","settings"],"permissions":["core:default","dialog:default","core:window:allow-set-always-on-top"]}}
+{"default":{"identifier":"default","description":"Core permissions for the main status viewer window","local":true,"windows":["main","settings"],"permissions":["core:default","dialog:default","core:window:allow-set-always-on-top","core:window:allow-start-dragging"]}}

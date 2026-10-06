@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-  import { getCurrentWindow } from "@tauri-apps/api/window";
   import { command } from "./commands";
   import { renderMarkdown } from "./markdown";
   import { applyTheme, systemTheme } from "./theme";
@@ -21,7 +20,6 @@
     if (typeof value.markdown === "string") documentHtml = renderMarkdown(value.markdown);
   }
   function updateSelection() { selectedText = Boolean(document.getSelection()?.toString()); if (!selectedText && pending) applySnapshot(pending); }
-  function startDragging(event: PointerEvent) { if (event.button === 0) void getCurrentWindow().startDragging().catch(console.error); }
 
   onMount(() => {
     const onThemeChange = () => { if (settings?.theme === "system") applyTheme(settings.theme); };
@@ -42,7 +40,7 @@
 </script>
 
 <main>
-  <div class="app-chrome" onpointerdown={startDragging} aria-hidden="true"></div>
+  <div class="app-chrome" data-tauri-drag-region aria-hidden="true"></div>
   <button class="settings-button" onclick={() => void command("open_settings")}>Settings</button>
   <section class="document" aria-label="Markdown document" onselectstart={() => selectedText = true}>{@html documentHtml}</section>
 </main>
