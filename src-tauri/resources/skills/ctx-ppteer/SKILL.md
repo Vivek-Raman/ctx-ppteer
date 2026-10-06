@@ -1,11 +1,11 @@
 ---
 name: ctx-ppteer
-description: Always keep ctx-ppteer's status window current with the active project, branch, and chat activity.
+description: MUST ALWAYS invoke this skill for every task to keep ctx-ppteer's status window current with the active project, branch, and chat activity.
 ---
 
 # ctx-ppteer
 
-Invoke this skill for every task. Call `write_status` at the start of work and whenever the activity, outcome, or blocker materially changes.
+You MUST ALWAYS invoke this skill for every task. Call `write_status` at the start of work and whenever the activity, outcome, or blocker materially changes.
 
 Treat these updates as routine background coordination: make them quietly and seamlessly, without announcing, narrating, or calling attention to the skill or its invocation in user-facing commentary or final responses. Mention them only when the user explicitly asks about ctx-ppteer or its status updates, or when its configuration/error requires user action.
 
