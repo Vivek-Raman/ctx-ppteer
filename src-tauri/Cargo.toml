@@ -2,6 +2,7 @@
 name = "ctx-ppteer"
 version = "0.1.0"
 description = "A lightweight always-on-top Markdown status viewer"
+license = "GPL-3.0-only"
 authors = ["ctx-ppteer contributors"]
 edition = "2021"
 

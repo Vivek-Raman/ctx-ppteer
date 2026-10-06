@@ -2,30 +2,33 @@ use std::{fs, io::Write, path::Path};
 
 pub const MAX_STATUS_BYTES: usize = 1024 * 1024;
 
-const PROJECT_MARKER_PREFIX: &str = "<!-- ctx-ppteer-project: ";
-const PROJECT_MARKER_SUFFIX: &str = " -->";
-
 pub fn read_project_status(path: &Path, folder_name: &str) -> Result<Option<String>, String> {
     let markdown = read_markdown(path)?;
-    let marker = project_marker(folder_name)?;
     let title = project_title(folder_name)?;
-    Ok(project_section(&markdown, &marker, &title).map(str::to_owned))
+    Ok(project_section(&markdown, &title).map(str::to_owned))
 }
 
 pub fn write_project_status(path: &Path, folder_name: &str, status: &str) -> Result<usize, String> {
-    let marker = project_marker(folder_name)?;
     let title = project_title(folder_name)?;
     if status.trim().is_empty() {
         return Err("The status text cannot be empty".into());
     }
-    if status.contains(PROJECT_MARKER_PREFIX) {
-        return Err("The status text cannot contain ctx-ppteer project markers".into());
-    }
 
-    let section = format!("{marker}\n# {title}\n\n{}\n", status.trim());
+    let section = format!("# {title}\n\n{}\n", status.trim());
     let markdown = read_markdown(path)?;
-    let updated = if let Some((start, end)) = project_section_range(&markdown, &marker) {
-        format!("{}{}{}", &markdown[..start], section, &markdown[end..])
+    let updated = if let Some((start, end)) = project_section_range(&markdown, &title) {
+        let separator = if end < markdown.len() && !markdown[end..].starts_with('\n') {
+            "\n"
+        } else {
+            ""
+        };
+        format!(
+            "{}{}{}{}",
+            &markdown[..start],
+            section,
+            separator,
+            &markdown[end..]
+        )
     } else if markdown.trim().is_empty() {
         section
     } else {
@@ -48,41 +51,35 @@ fn read_markdown(path: &Path) -> Result<String, String> {
     }
 }
 
-fn project_marker(folder_name: &str) -> Result<String, String> {
-    if folder_name.is_empty()
-        || folder_name.contains(['\n', '\r'])
-        || folder_name.contains(PROJECT_MARKER_SUFFIX)
-    {
-        return Err("The project folder name must be a non-empty single line".into());
-    }
-    Ok(format!(
-        "{PROJECT_MARKER_PREFIX}{folder_name}{PROJECT_MARKER_SUFFIX}"
-    ))
-}
-
 fn project_title(folder_name: &str) -> Result<String, String> {
-    if folder_name.is_empty() {
+    if folder_name.is_empty() || folder_name.contains(['\n', '\r']) {
         return Err("The project folder name must be a non-empty single line".into());
     }
     Ok(folder_name.to_owned())
 }
 
-fn project_section<'a>(markdown: &'a str, marker: &str, title: &str) -> Option<&'a str> {
-    let (start, end) = project_section_range(markdown, marker)?;
-    let header = format!("{marker}\n# {title}\n\n");
-    markdown[start..end]
-        .strip_prefix(&header)
-        .map(str::trim_end)
+fn project_section<'a>(markdown: &'a str, title: &str) -> Option<&'a str> {
+    let (start, end) = project_section_range(markdown, title)?;
+    let section = &markdown[start..end];
+    let header = format!("# {title}\n\n");
+    section.strip_prefix(&header).map(str::trim_end)
 }
 
-fn project_section_range(markdown: &str, marker: &str) -> Option<(usize, usize)> {
-    let start = markdown.find(marker)?;
-    let after_marker = start + marker.len();
-    let end = markdown[after_marker..]
-        .find(PROJECT_MARKER_PREFIX)
-        .map(|offset| after_marker + offset)
-        .unwrap_or(markdown.len());
-    Some((start, end))
+fn project_section_range(markdown: &str, title: &str) -> Option<(usize, usize)> {
+    let header = format!("# {title}");
+    let mut offset = 0;
+    let mut start = None;
+    for raw_line in markdown.split_inclusive('\n') {
+        let line = raw_line.trim_end_matches(['\n', '\r']);
+        if start.is_some() && line.starts_with("# ") {
+            return Some((start.unwrap(), offset));
+        }
+        if line == header {
+            start = Some(offset);
+        }
+        offset += raw_line.len();
+    }
+    start.map(|start| (start, markdown.len()))
 }
 
 pub fn write_markdown(path: &Path, markdown: &str) -> Result<usize, String> {
@@ -167,7 +164,7 @@ mod tests {
 
         assert_eq!(
             std::fs::read_to_string(path).unwrap(),
-            "<!-- ctx-ppteer-project: myAPI-tool_v2 -->\n# myAPI-tool_v2\n\nmain\n"
+            "# myAPI-tool_v2\n\nmain\n"
         );
     }
 }
