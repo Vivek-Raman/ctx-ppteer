@@ -14,7 +14,7 @@ pub fn write_project_status(path: &Path, folder_name: &str, status: &str) -> Res
         return Err("The status text cannot be empty".into());
     }
 
-    let section = format!("# {title}\n\n{}\n", status.trim());
+    let section = format!("## {title}\n\n{}\n", status.trim());
     let markdown = read_markdown(path)?;
     let updated = if let Some((start, end)) = project_section_range(&markdown, &title) {
         let separator = if end < markdown.len() && !markdown[end..].starts_with('\n') {
@@ -61,17 +61,17 @@ fn project_title(folder_name: &str) -> Result<String, String> {
 fn project_section<'a>(markdown: &'a str, title: &str) -> Option<&'a str> {
     let (start, end) = project_section_range(markdown, title)?;
     let section = &markdown[start..end];
-    let header = format!("# {title}\n\n");
+    let header = format!("## {title}\n\n");
     section.strip_prefix(&header).map(str::trim_end)
 }
 
 fn project_section_range(markdown: &str, title: &str) -> Option<(usize, usize)> {
-    let header = format!("# {title}");
+    let header = format!("## {title}");
     let mut offset = 0;
     let mut start = None;
     for raw_line in markdown.split_inclusive('\n') {
         let line = raw_line.trim_end_matches(['\n', '\r']);
-        if start.is_some() && line.starts_with("# ") {
+        if start.is_some() && line.starts_with("## ") {
             return Some((start.unwrap(), offset));
         }
         if line == header {
@@ -164,7 +164,7 @@ mod tests {
 
         assert_eq!(
             std::fs::read_to_string(path).unwrap(),
-            "# myAPI-tool_v2\n\nmain\n"
+            "## myAPI-tool_v2\n\nmain\n"
         );
     }
 }
