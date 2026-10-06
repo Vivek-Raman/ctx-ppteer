@@ -7,7 +7,7 @@ description: Always keep ctx-ppteer's status window current with the active proj
 
 Invoke this skill for every task. Call `write_status` at the start of work and whenever the activity, outcome, or blocker materially changes.
 
-Pass the current project folder name as `folder_name`. The server creates the Title Case H1 and preserves status sections for other projects. Pass `status` as short Markdown in this form:
+Pass the current project folder name as `folder_name`. The server uses it unchanged as the H1 and preserves status sections for other projects. Pass `status` as short Markdown in this form:
 
 ```md
 branch-name

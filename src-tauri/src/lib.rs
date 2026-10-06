@@ -31,6 +31,7 @@ use app_state::{new_viewer_state, start_watcher, update, Snapshot, ViewerState};
 const SKILL_NAME: &str = "ctx-ppteer";
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct SkillInstallation {
     installed: bool,
     mcp_registered: bool,
@@ -101,9 +102,16 @@ fn document_has_codex_mcp(document: &DocumentMut) -> bool {
     document
         .as_table()
         .get("mcp_servers")
-        .and_then(|item| item.as_table())
-        .and_then(|servers| servers.get(SKILL_NAME))
-        .is_some_and(|item| item.is_table() || item.is_inline_table())
+        .is_some_and(|servers| {
+            servers
+                .as_table()
+                .and_then(|servers| servers.get(SKILL_NAME))
+                .is_some_and(|server| server.is_table() || server.is_inline_table())
+                || servers
+                    .as_inline_table()
+                    .and_then(|servers| servers.get(SKILL_NAME))
+                    .is_some_and(|server| server.is_inline_table())
+        })
 }
 
 fn register_codex_mcp_at(path: &Path, executable: &Path) -> Result<(), String> {
@@ -122,6 +130,10 @@ fn register_codex_mcp_at(path: &Path, executable: &Path) -> Result<(), String> {
     document["mcp_servers"][SKILL_NAME]["command"] =
         value(executable.to_string_lossy().to_string());
     document["mcp_servers"][SKILL_NAME]["args"] = value(Array::from_iter(["--mcp"]));
+    save_toml_config(path, &document)
+}
+
+fn save_toml_config(path: &Path, document: &DocumentMut) -> Result<(), String> {
     let temporary = path.with_extension("toml.tmp");
     fs::write(&temporary, document.to_string())
         .map_err(|error| format!("Unable to write {}: {error}", path.display()))?;
@@ -131,6 +143,35 @@ fn register_codex_mcp_at(path: &Path, executable: &Path) -> Result<(), String> {
 
 fn register_codex_mcp(app: &AppHandle, executable: &Path) -> Result<(), String> {
     register_codex_mcp_at(&codex_config_path(app)?, executable)
+}
+
+fn unregister_codex_mcp_at(path: &Path) -> Result<(), String> {
+    let contents = match fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(format!("Unable to read {}: {error}", path.display())),
+    };
+    let mut document = DocumentMut::from_str(&contents)
+        .map_err(|error| format!("Unable to read {}: {error}", path.display()))?;
+    let removed = document
+        .as_table_mut()
+        .get_mut("mcp_servers")
+        .is_some_and(|servers| {
+            servers
+                .as_table_mut()
+                .is_some_and(|servers| servers.remove(SKILL_NAME).is_some())
+                || servers
+                    .as_inline_table_mut()
+                    .is_some_and(|servers| servers.remove(SKILL_NAME).is_some())
+        });
+    if removed {
+        save_toml_config(path, &document)?;
+    }
+    Ok(())
+}
+
+fn unregister_codex_mcp(app: &AppHandle) -> Result<(), String> {
+    unregister_codex_mcp_at(&codex_config_path(app)?)
 }
 
 fn read_json_config(path: &Path) -> Result<Value, String> {
@@ -160,6 +201,20 @@ fn nested_object_mut<'a>(
         current = object_mut(entry, label)?;
     }
     Ok(current)
+}
+
+fn existing_nested_object_mut<'a>(
+    value: &'a mut Value,
+    keys: &[&str],
+) -> Option<&'a mut Map<String, Value>> {
+    let (key, remaining) = keys.split_first()?;
+    let object = value.as_object_mut()?;
+    let next = object.get_mut(*key)?;
+    if remaining.is_empty() {
+        next.as_object_mut()
+    } else {
+        existing_nested_object_mut(next, remaining)
+    }
 }
 
 fn save_json_config(path: &Path, value: &Value) -> Result<(), String> {
@@ -197,6 +252,16 @@ fn register_opencode_mcp(path: &Path, executable: &Path) -> Result<(), String> {
         json!({ "type": "local", "command": [executable, "--mcp"], "codemode": false }),
     );
     save_json_config(path, &config)
+}
+
+fn unregister_json_mcp(path: &Path, keys: &[&str]) -> Result<(), String> {
+    let mut config = read_json_config(path)?;
+    let removed = existing_nested_object_mut(&mut config, keys)
+        .is_some_and(|servers| servers.remove(SKILL_NAME).is_some());
+    if removed {
+        save_json_config(path, &config)?;
+    }
+    Ok(())
 }
 
 fn json_mcp_registered(path: &Path, keys: &[&str]) -> Result<bool, String> {
@@ -460,6 +525,25 @@ fn install_claude_mcp(executable: &Path) -> Result<bool, String> {
     }
 }
 
+fn uninstall_claude_mcp() -> Result<bool, String> {
+    let output = match Command::new("claude")
+        .args(["mcp", "remove", SKILL_NAME, "--scope", "user"])
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(format!("Unable to run Claude Code: {error}")),
+    };
+    if output.status.success() {
+        Ok(true)
+    } else {
+        Err(format!(
+            "Claude Code rejected removal of the MCP configuration: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    }
+}
+
 fn bundled_skill_source(app: &AppHandle) -> Result<PathBuf, String> {
     let source = app
         .path()
@@ -478,8 +562,9 @@ fn integration_status(app: &AppHandle) -> Result<SkillInstallation, String> {
     let agy_config = home.join(".gemini/config/mcp_config.json");
     let opencode_config = home.join(".config/opencode/opencode.json");
     let claude_config = home.join(".claude.json");
-    let bundled_skill = bundled_skill_source(app)?;
-    let bundled_hash = skill_hash(&bundled_skill)?;
+    let bundled_hash = bundled_skill_source(app)
+        .and_then(|source| skill_hash(&source))
+        .ok();
     let targets = skill_targets(app)?
         .into_iter()
         .map(|(id, name, path)| SkillTarget {
@@ -487,18 +572,22 @@ fn integration_status(app: &AppHandle) -> Result<SkillInstallation, String> {
             name: name.into(),
             installed: path.join("SKILL.md").is_file(),
             up_to_date: path.join("SKILL.md").is_file()
-                && skill_hash(&path)
-                    .map(|installed_hash| installed_hash == bundled_hash)
-                    .unwrap_or(false),
+                && bundled_hash.as_ref().is_none_or(|bundled_hash| {
+                    skill_hash(&path)
+                        .map(|installed_hash| installed_hash == *bundled_hash)
+                        .unwrap_or(false)
+                }),
             path: path.display().to_string(),
         })
         .collect::<Vec<_>>();
     let mut additional_targets = additional_codex_skill_targets(&home);
     for target in &mut additional_targets {
         target.up_to_date = target.installed
-            && skill_hash(Path::new(&target.path))
-                .map(|installed_hash| installed_hash == bundled_hash)
-                .unwrap_or(false);
+            && bundled_hash.as_ref().is_none_or(|bundled_hash| {
+                skill_hash(Path::new(&target.path))
+                    .map(|installed_hash| installed_hash == *bundled_hash)
+                    .unwrap_or(false)
+            });
     }
     let candidates = [
         (
@@ -743,6 +832,46 @@ fn install_mcp_for_harness(harness: String, app: AppHandle) -> Result<SkillInsta
     }
     integration_status(&app)
 }
+
+#[tauri::command]
+fn uninstall_mcp_for_harness(harness: String, app: AppHandle) -> Result<SkillInstallation, String> {
+    let home = home_dir(&app)?;
+    if let Some(directory) = harness.strip_prefix("codex:") {
+        let directory = PathBuf::from(directory);
+        if directory.parent() == Some(home.as_path())
+            && directory.is_dir()
+            && directory
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with(".codex-"))
+        {
+            unregister_codex_mcp_at(&directory.join("config.toml"))?;
+            return integration_status(&app);
+        }
+    }
+    if !harness_available(&harness, &home) {
+        return Err(format!("{harness} was not found on this computer"));
+    }
+    match harness.as_str() {
+        "codex" => unregister_codex_mcp(&app)?,
+        "claude" => {
+            if !uninstall_claude_mcp()? {
+                return Err("Claude Code is not installed; its MCP tool was not removed.".into());
+            }
+        }
+        "cursor" => unregister_json_mcp(&home.join(".cursor/mcp.json"), &["mcpServers"])?,
+        "antigravity" => unregister_json_mcp(
+            &home.join(".gemini/config/mcp_config.json"),
+            &["mcpServers"],
+        )?,
+        "opencode" => unregister_json_mcp(
+            &home.join(".config/opencode/opencode.json"),
+            &["mcp", "servers"],
+        )?,
+        _ => return Err(format!("Unsupported harness: {harness}")),
+    }
+    integration_status(&app)
+}
 #[tauri::command]
 fn set_pinned(pinned: bool, app: AppHandle) -> Result<(), String> {
     app.get_webview_window("main")
@@ -855,6 +984,23 @@ mod tests {
     }
 
     #[test]
+    fn unregisters_standard_json_mcp_without_losing_existing_servers() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("mcp.json");
+        fs::write(
+            &path,
+            r#"{"mcpServers":{"ctx-ppteer":{"command":"ctx-ppteer"},"existing":{"command":"existing"}}}"#,
+        )
+        .unwrap();
+
+        unregister_json_mcp(&path, &["mcpServers"]).unwrap();
+
+        let config: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert!(config["mcpServers"]["existing"].is_object());
+        assert!(config["mcpServers"].get(SKILL_NAME).is_none());
+    }
+
+    #[test]
     fn treats_an_empty_json_config_as_unconfigured() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("mcp.json");
@@ -902,6 +1048,63 @@ ctx-ppteer = { command = "/Applications/ctx-ppteer", args = ["--mcp"] }
 
         assert!(document_has_codex_mcp(&document));
     }
+
+    #[test]
+    fn recognizes_inline_codex_mcp_servers_table() {
+        let document = DocumentMut::from_str(
+            r#"mcp_servers = { ctx-ppteer = { command = "/Applications/ctx-ppteer", args = ["--mcp"] } }
+"#,
+        )
+        .unwrap();
+
+        assert!(document_has_codex_mcp(&document));
+    }
+
+    #[test]
+    fn registers_into_inline_codex_mcp_servers_table() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"mcp_servers = { existing = { command = "existing" } }
+"#,
+        )
+        .unwrap();
+
+        register_codex_mcp_at(&path, Path::new("/Applications/ctx-ppteer")).unwrap();
+
+        let document = DocumentMut::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(document_has_codex_mcp(&document));
+        assert!(document
+            .as_table()
+            .get("mcp_servers")
+            .and_then(|servers| servers.as_inline_table())
+            .and_then(|servers| servers.get("existing"))
+            .is_some());
+    }
+
+    #[test]
+    fn unregisters_inline_codex_mcp_servers_table() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"mcp_servers = { ctx-ppteer = { command = "/Applications/ctx-ppteer", args = ["--mcp"] }, existing = { command = "existing" } }
+"#,
+        )
+        .unwrap();
+
+        unregister_codex_mcp_at(&path).unwrap();
+
+        let document = DocumentMut::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(!document_has_codex_mcp(&document));
+        assert!(document
+            .as_table()
+            .get("mcp_servers")
+            .and_then(|servers| servers.as_inline_table())
+            .and_then(|servers| servers.get("existing"))
+            .is_some());
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -923,6 +1126,7 @@ pub fn run() {
             install_skill,
             install_skill_for_target,
             install_mcp_for_harness,
+            uninstall_mcp_for_harness,
             set_pinned,
             pick_source
         ])

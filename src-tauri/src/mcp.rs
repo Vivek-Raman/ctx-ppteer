@@ -10,7 +10,7 @@ use serde::Deserialize;
 struct WriteStatusInput {
     /// The current project's folder name, such as "ctx-ppteer".
     folder_name: String,
-    /// Complete Markdown for this project's status beneath its generated title. Include the plain-text branch first, followed by activity bullets.
+    /// Complete Markdown for this project's status beneath its project-folder title. Include the plain-text branch first, followed by activity bullets.
     status: String,
 }
 
@@ -47,7 +47,7 @@ impl StatusServer {
     }
 
     #[tool(
-        description = "Create or replace this project's ctx-ppteer status section. The server generates the Title Case project heading and preserves sections for other projects."
+        description = "Create or replace this project's ctx-ppteer status section. The server uses the project folder name as the heading and preserves sections for other projects."
     )]
     async fn write_status(
         &self,

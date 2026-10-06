@@ -49,7 +49,6 @@ fn read_markdown(path: &Path) -> Result<String, String> {
 }
 
 fn project_marker(folder_name: &str) -> Result<String, String> {
-    let folder_name = folder_name.trim();
     if folder_name.is_empty()
         || folder_name.contains(['\n', '\r'])
         || folder_name.contains(PROJECT_MARKER_SUFFIX)
@@ -62,28 +61,10 @@ fn project_marker(folder_name: &str) -> Result<String, String> {
 }
 
 fn project_title(folder_name: &str) -> Result<String, String> {
-    let title = title_case(folder_name);
-    if title.is_empty() {
-        return Err("The project folder name must contain letters or digits".into());
+    if folder_name.is_empty() {
+        return Err("The project folder name must be a non-empty single line".into());
     }
-    Ok(title)
-}
-
-fn title_case(folder_name: &str) -> String {
-    folder_name
-        .split(|character: char| !character.is_alphanumeric())
-        .filter(|word| !word.is_empty())
-        .map(|word| {
-            let mut characters = word.chars();
-            let first = characters.next().expect("word is not empty");
-            format!(
-                "{}{}",
-                first.to_uppercase(),
-                characters.as_str().to_lowercase()
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
+    Ok(folder_name.to_owned())
 }
 
 fn project_section<'a>(markdown: &'a str, marker: &str, title: &str) -> Option<&'a str> {
@@ -175,5 +156,18 @@ mod tests {
         let path = directory.path().join("status.md");
         assert!(write_project_status(&path, "", "main").is_err());
         assert!(write_project_status(&path, "project\nname", "main").is_err());
+    }
+
+    #[test]
+    fn preserves_the_folder_name_in_the_heading() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("status.md");
+
+        write_project_status(&path, "myAPI-tool_v2", "main").unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(path).unwrap(),
+            "<!-- ctx-ppteer-project: myAPI-tool_v2 -->\n# myAPI-tool_v2\n\nmain\n"
+        );
     }
 }
