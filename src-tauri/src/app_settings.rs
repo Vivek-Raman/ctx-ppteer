@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::{fs, path::PathBuf};
-use tauri::{AppHandle, Manager, PhysicalPosition, WebviewWindow};
+use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
 
 const DEFAULT_SOURCE_FILE: &str = "agent-status.md";
 const SETTINGS_DIRECTORY: &str = ".config/ctx-ppteer";
@@ -11,6 +11,12 @@ pub struct WindowState {
     monitor_name: Option<String>,
     relative_x: f64,
     relative_y: f64,
+    #[serde(default)]
+    width: Option<u32>,
+    #[serde(default)]
+    height: Option<u32>,
+    #[serde(default)]
+    maximized: bool,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -102,8 +108,28 @@ pub fn load(app: &AppHandle) -> Result<Settings, String> {
 }
 
 pub fn save_window_state(window: &WebviewWindow) {
-    let (Ok(position), Ok(monitors)) = (window.outer_position(), window.available_monitors())
-    else {
+    let Ok(maximized) = window.is_maximized() else {
+        return;
+    };
+    let Ok(mut settings) = load(&window.app_handle()) else {
+        return;
+    };
+
+    // A maximized window's outer bounds describe the monitor, not the user's last
+    // normal window bounds. Preserve those bounds and only update the mode.
+    if maximized {
+        if let Some(state) = settings.window.as_mut() {
+            state.maximized = true;
+            let _ = save(&window.app_handle(), &settings);
+        }
+        return;
+    }
+
+    let (Ok(position), Ok(size), Ok(monitors)) = (
+        window.outer_position(),
+        window.outer_size(),
+        window.available_monitors(),
+    ) else {
         return;
     };
     let Some(monitor) = monitors.iter().find(|monitor| {
@@ -120,9 +146,9 @@ pub fn save_window_state(window: &WebviewWindow) {
         monitor_name: monitor.name().cloned(),
         relative_x: (position.x - area.position.x) as f64 / area.size.width.max(1) as f64,
         relative_y: (position.y - area.position.y) as f64 / area.size.height.max(1) as f64,
-    };
-    let Ok(mut settings) = load(&window.app_handle()) else {
-        return;
+        width: Some(size.width),
+        height: Some(size.height),
+        maximized: false,
     };
     settings.window = Some(window_state);
     let _ = save(&window.app_handle(), &settings);
@@ -144,10 +170,15 @@ pub fn restore_window_state(window: &WebviewWindow) {
     else {
         return;
     };
+    let area = monitor.work_area();
+    if let (Some(width), Some(height)) = (state.width, state.height) {
+        let width = width.min(area.size.width).max(1);
+        let height = height.min(area.size.height).max(1);
+        let _ = window.set_size(PhysicalSize::new(width, height));
+    }
     let Ok(size) = window.outer_size() else {
         return;
     };
-    let area = monitor.work_area();
     let max_x = area.position.x + area.size.width.saturating_sub(size.width) as i32;
     let max_y = area.position.y + area.size.height.saturating_sub(size.height) as i32;
     let x = ((area.position.x as f64 + state.relative_x * area.size.width as f64).round() as i32)
@@ -155,4 +186,42 @@ pub fn restore_window_state(window: &WebviewWindow) {
     let y = ((area.position.y as f64 + state.relative_y * area.size.height as f64).round() as i32)
         .clamp(area.position.y, max_y.max(area.position.y));
     let _ = window.set_position(PhysicalPosition::new(x, y));
+    if state.maximized {
+        let _ = window.maximize();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn loads_window_state_saved_before_size_and_maximize_tracking() {
+        let settings: Settings = serde_json::from_str(
+            r#"{"sourcePath":"/tmp/status.md","window":{"monitor_name":"Display","relative_x":0.25,"relative_y":0.5}}"#,
+        )
+        .unwrap();
+
+        let state = settings.window.unwrap();
+        assert_eq!(state.width, None);
+        assert_eq!(state.height, None);
+        assert!(!state.maximized);
+    }
+
+    #[test]
+    fn saves_complete_window_bounds() {
+        let state = WindowState {
+            monitor_name: Some("Display".into()),
+            relative_x: 0.25,
+            relative_y: 0.5,
+            width: Some(800),
+            height: Some(600),
+            maximized: true,
+        };
+
+        let value = serde_json::to_value(state).unwrap();
+        assert_eq!(value["width"], 800);
+        assert_eq!(value["height"], 600);
+        assert_eq!(value["maximized"], true);
+    }
 }
