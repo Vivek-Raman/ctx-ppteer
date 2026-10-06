@@ -660,6 +660,22 @@ fn get_snapshot(state: State<'_, Arc<ViewerState>>) -> Snapshot {
     state.snapshot.lock().unwrap().clone()
 }
 #[tauri::command]
+fn save_markdown(
+    markdown: String,
+    app: AppHandle,
+    state: State<'_, Arc<ViewerState>>,
+) -> Result<(), String> {
+    let path = state
+        .path
+        .lock()
+        .map_err(|_| "State unavailable")?
+        .clone()
+        .ok_or("No Markdown source is selected")?;
+    status_file::write_markdown(&path, &markdown)?;
+    update(&app, &state);
+    Ok(())
+}
+#[tauri::command]
 fn set_source(
     path: String,
     app: AppHandle,
@@ -1115,6 +1131,7 @@ pub fn run() {
         .manage(state.clone())
         .invoke_handler(tauri::generate_handler![
             get_snapshot,
+            save_markdown,
             set_source,
             use_default_source,
             get_default_source,
