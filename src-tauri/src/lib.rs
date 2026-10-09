@@ -772,19 +772,34 @@ fn open_settings(app: AppHandle) {
     show_settings_window(&app);
 }
 #[tauri::command]
-fn set_appearance_settings(theme: String, text_scale: f64, app: AppHandle) -> Result<(), String> {
+fn set_appearance_settings(
+    theme: String,
+    primary_color: String,
+    text_scale: f64,
+    app: AppHandle,
+) -> Result<(), String> {
     if !matches!(theme.as_str(), "system" | "light" | "dark") {
         return Err("Theme must be system, light, or dark".into());
     }
     if !(0.85..=1.35).contains(&text_scale) {
         return Err("Text scale must be between 0.85 and 1.35".into());
     }
+    if !is_hex_color(&primary_color) {
+        return Err("Primary color must be a six-digit hex color".into());
+    }
     let mut settings = load_settings(&app)?;
     settings.theme = theme;
+    settings.primary_color = primary_color;
     settings.text_scale = text_scale;
     save_settings(&app, &settings)?;
     let _ = app.emit("settings-update", settings);
     Ok(())
+}
+
+fn is_hex_color(value: &str) -> bool {
+    value.len() == 7
+        && value.starts_with('#')
+        && value.bytes().skip(1).all(|byte| byte.is_ascii_hexdigit())
 }
 #[tauri::command]
 fn set_project_sort_order(project_sort_order: String, app: AppHandle) -> Result<(), String> {

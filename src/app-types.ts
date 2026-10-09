@@ -37,6 +37,7 @@ export type SkillInstallation = {
 export type Settings = {
   sourcePath: string;
   theme: Theme;
+  primaryColor: string;
   textScale: number;
   pinned: boolean;
   doubleClickToEdit: boolean;

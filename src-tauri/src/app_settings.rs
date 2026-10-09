@@ -26,6 +26,8 @@ pub struct Settings {
     pub source_path: String,
     #[serde(default = "default_theme")]
     pub theme: String,
+    #[serde(default = "default_primary_color")]
+    pub primary_color: String,
     #[serde(default = "default_text_scale")]
     pub text_scale: f64,
     #[serde(default = "default_pinned")]
@@ -40,6 +42,9 @@ pub struct Settings {
 
 fn default_theme() -> String {
     "system".into()
+}
+fn default_primary_color() -> String {
+    "#c98c5a".into()
 }
 fn default_text_scale() -> f64 {
     1.0
@@ -85,6 +90,7 @@ fn default_settings(app: &AppHandle) -> Result<Settings, String> {
     Ok(Settings {
         source_path: ensure_default_source(app)?.display().to_string(),
         theme: default_theme(),
+        primary_color: default_primary_color(),
         text_scale: default_text_scale(),
         pinned: default_pinned(),
         double_click_to_edit: default_double_click_to_edit(),
@@ -244,5 +250,6 @@ mod tests {
             serde_json::from_str(r#"{"sourcePath":"/tmp/status.md"}"#).unwrap();
 
         assert_eq!(settings.project_sort_order, PROJECT_DIRECTORY_ASC);
+        assert_eq!(settings.primary_color, "#c98c5a");
     }
 }

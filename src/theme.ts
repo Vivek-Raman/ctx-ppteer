@@ -9,3 +9,7 @@ export function applyTheme(theme: Theme) {
   document.documentElement.style.colorScheme = dark ? "dark" : "light";
   void getCurrentWindow().setTheme(theme === "system" ? null : theme).catch(console.error);
 }
+
+export function applyPrimaryColor(primaryColor: string) {
+  document.documentElement.style.setProperty("--accent", primaryColor);
+}

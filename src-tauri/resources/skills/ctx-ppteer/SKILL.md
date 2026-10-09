@@ -20,6 +20,8 @@ branch-name
 
 Keep the branch as ordinary text, not a heading or code formatting. When reviewing a pull request, include the PR number and commit hash, and use a canonical Markdown PR link: `- Reviewing PR [#123](https://github.com/OWNER/REPOSITORY/pull/123) at \`a1b2c3d\`.`
 
+Branches can change during a thread (including through another harness or worktree action). When preparing a `write_status` call, use the branch currently checked out in the active working directory rather than assuming an earlier branch is still current. Treat this as a quick refresh that is part of the status write, not as a separate monitoring or investigation task.
+
 Use `read_status` with the project folder name to retrieve the current section before a change when that context is useful.
 
 Do not create or select a source file without the user's approval. If the tool reports missing settings, ask the user to open ctx-ppteer and choose a file.
