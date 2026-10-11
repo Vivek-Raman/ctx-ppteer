@@ -14,11 +14,10 @@ Pass the current project folder name as `folder_name`. The server uses it unchan
 ```md
 branch-name
 
-- Current activity.
-- Relevant progress, result, or blocker.
+- Current activity or result.
 ```
 
-Keep the branch as ordinary text, not a heading or code formatting. When reviewing a pull request, include the PR number and commit hash, and use a canonical Markdown PR link: `- Reviewing PR [#123](https://github.com/OWNER/REPOSITORY/pull/123) at \`a1b2c3d\`.`
+Keep the branch as ordinary text, not a heading or code formatting. Keep status text to one brief bullet whenever possible. When the update reports task completion, start its bullet with `**DONE**:`. Do not include commit SHAs, hashes, or other revision identifiers. Mention an issue or roadblock only if it is a critical, fatal blocker that has not been worked around. When reviewing a pull request, include only a canonical Markdown PR link: `- Reviewing PR [#123](https://github.com/OWNER/REPOSITORY/pull/123).`
 
 Branches can change during a thread (including through another harness or worktree action). When preparing a `write_status` call, use the branch currently checked out in the active working directory rather than assuming an earlier branch is still current. Treat this as a quick refresh that is part of the status write, not as a separate monitoring or investigation task.
 
