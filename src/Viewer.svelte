@@ -10,6 +10,7 @@
   let pending: Snapshot | null = null;
   let entries: StatusEntry[] = [];
   let statusError = "";
+  let dismissing = "";
   $: projects = [...new Set(entries.map((entry) => entry.folder_name))].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
   let settings: Settings | null = null;
   let windowFocused = true;
@@ -32,6 +33,28 @@
     if (!link) return null;
     try { const url = new URL(link); return ["https:", "http:"].includes(url.protocol) ? url.href : null; }
     catch { return null; }
+  }
+  function relativeTime(value: string) {
+    const minutes = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 60_000));
+    if (!minutes) return "now";
+    if (minutes < 60) return `${minutes}m`;
+    const hours = Math.floor(minutes / 60);
+    const remainingMinutes = minutes % 60;
+    if (hours < 24) return `${hours}h${remainingMinutes ? ` ${remainingMinutes}m` : ""}`;
+    const days = Math.floor(hours / 24);
+    const remainingHours = hours % 24;
+    return `${days}d${remainingHours ? ` ${remainingHours}h` : ""}`;
+  }
+  async function dismissPoint(entry: StatusEntry, pointIndex: number) {
+    const id = `${entry.folder_name}:${entry.session_id ?? ""}:${entry.updated_at}:${pointIndex}`;
+    dismissing = id;
+    try {
+      await command("dismiss_point", { folderName: entry.folder_name, sessionId: entry.session_id, branch: entry.branch, updatedAt: entry.updated_at, pointIndex });
+    } catch (error) {
+      statusError = error instanceof Error ? error.message : String(error);
+    } finally {
+      dismissing = "";
+    }
   }
 
   async function cycleTheme() {
@@ -104,8 +127,15 @@
         <p>{branch}</p>
         <ul>
           {#each entries.filter((entry) => entry.folder_name === folder && entry.branch === branch) as entry}
-            {#each entry.points as point}
-              <li>{#if point.done}<strong>DONE</strong>:{" "}{/if}{#if safeLink(point.link)}<a href={safeLink(point.link)} target="_blank" rel="noopener noreferrer">{point.text}</a>{:else}{point.text}{/if}</li>
+            {#each entry.points as point, pointIndex}
+              {@const pointId = `${entry.folder_name}:${entry.session_id ?? ""}:${entry.updated_at}:${pointIndex}`}
+              <li class="status-point">
+                <span class="point-text">{#if point.done}<strong>DONE</strong>: {" "}{/if}{#if safeLink(point.link)}<a href={safeLink(point.link)} target="_blank" rel="noopener noreferrer">{point.text}</a>{:else}{point.text}{/if}</span>
+                <span class="point-actions">
+                  <span class="point-age">{relativeTime(point.submitted_at ?? entry.updated_at)}</span>
+                  <button class="dismiss-point" onclick={() => void dismissPoint(entry, pointIndex)} disabled={dismissing === pointId} aria-label={`Dismiss ${point.text}`} title="Dismiss point">×</button>
+                </span>
+              </li>
             {/each}
           {/each}
         </ul>
@@ -125,5 +155,11 @@
   .icon-button { min-width: 1.8rem; padding-inline: 0.35rem !important; }
   .document-actions.window-unfocused { pointer-events: none; opacity: 0; }
   .status-error { color: #c43d35; font-size: 0.8rem; }
+  .status-point { position: relative; }
+  .point-actions { position: absolute; top: 50%; right: 0; display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.14rem 0.28rem 0.14rem 0.5rem; border-radius: 999px; transform: translateY(-50%); opacity: 0; pointer-events: none; color: var(--muted); background: color-mix(in srgb, var(--bg) 72%, transparent); backdrop-filter: blur(10px) saturate(1.15); -webkit-backdrop-filter: blur(10px) saturate(1.15); box-shadow: 0 2px 8px color-mix(in srgb, var(--text) 8%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--bg) 28%, transparent); font-size: 0.78em; white-space: nowrap; transition: opacity 120ms ease; }
+  .status-point:hover .point-actions, .status-point:focus-within .point-actions { opacity: 1; pointer-events: auto; }
+  .dismiss-point { padding: 0 0.28rem; border: 0; border-radius: 0.3rem; color: inherit; background: transparent; font-size: 1.25em; line-height: 1; }
+  .dismiss-point:not(:disabled):hover { color: #c43d35; background: color-mix(in srgb, #c43d35 12%, transparent); }
+  .dismiss-point:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   @media (max-width: 440px), (max-height: 360px) { .line-art-extra { display: none; } }@media (max-width: 340px), (max-height: 280px) { .line-art-medium { display: none; } }@media (prefers-reduced-motion: reduce) { .line-art animate, .bottom-line-art animate { display: none; } }
 </style>

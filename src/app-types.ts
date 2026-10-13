@@ -1,7 +1,7 @@
 export type Theme = "system" | "light" | "dark";
 export type ProjectSortOrder = "project-directory-asc";
 
-export type StatusPoint = { text: string; done: boolean; link: string | null };
+export type StatusPoint = { text: string; done: boolean; link: string | null; submitted_at?: string | null };
 export type StatusEntry = {
   folder_name: string;
   session_id: string | null;

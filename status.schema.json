@@ -91,6 +91,11 @@
             }
           ],
           "default": null
+        },
+        "submitted_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server-generated timestamp retained while the point is unchanged."
         }
       }
     }

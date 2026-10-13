@@ -13,6 +13,9 @@ pub struct Point {
     /// Optional HTTPS or HTTP URL; the viewer renders the point text as a link.
     #[serde(default)]
     pub link: Option<String>,
+    /// Server-assigned timestamp retained while the point is unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub submitted_at: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -71,6 +74,10 @@ fn validate(document: &Document) -> Result<(), String> {
                     "Points need text and links must use HTTP or HTTPS without whitespace".into(),
                 );
             }
+            if let Some(submitted_at) = &point.submitted_at {
+                chrono::DateTime::parse_from_rfc3339(submitted_at)
+                    .map_err(|_| "Invalid point timestamp")?;
+            }
         }
         chrono::DateTime::parse_from_rfc3339(&entry.updated_at)
             .map_err(|_| "Invalid status timestamp")?;
@@ -126,19 +133,8 @@ pub fn write_project_status(
     folder_name: String,
     session_id: String,
     branch: String,
-    points: Vec<Point>,
+    mut points: Vec<Point>,
 ) -> Result<usize, String> {
-    let entry = Entry {
-        folder_name,
-        session_id: Some(session_id),
-        branch,
-        points,
-        updated_at: chrono::Utc::now().to_rfc3339(),
-    };
-    validate(&Document {
-        version: 1,
-        entries: vec![entry.clone()],
-    })?;
     let parent = path.parent().ok_or("Status directory unavailable")?;
     fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     let lock = OpenOptions::new()
@@ -151,6 +147,46 @@ pub fn write_project_status(
     lock.lock()
         .map_err(|error| format!("Unable to lock status JSON: {error}"))?;
     let mut document = read_document(path)?;
+    let submitted_at = chrono::Utc::now().to_rfc3339();
+    if let Some(previous) = document.entries.iter().find(|old| {
+        old.folder_name == folder_name && old.session_id.as_deref() == Some(&session_id)
+    }) {
+        let mut preserved = vec![false; previous.points.len()];
+        for point in &mut points {
+            if point.submitted_at.is_some() {
+                continue;
+            }
+            if let Some((index, old)) = previous.points.iter().enumerate().find(|(index, old)| {
+                !preserved[*index]
+                    && old.text == point.text
+                    && old.done == point.done
+                    && old.link == point.link
+                    && old.submitted_at.is_some()
+            }) {
+                point.submitted_at = old.submitted_at.clone();
+                preserved[index] = true;
+            } else {
+                point.submitted_at = Some(submitted_at.clone());
+            }
+        }
+    } else {
+        for point in &mut points {
+            if point.submitted_at.is_none() {
+                point.submitted_at = Some(submitted_at.clone());
+            }
+        }
+    }
+    let entry = Entry {
+        folder_name,
+        session_id: Some(session_id),
+        branch,
+        points,
+        updated_at: submitted_at,
+    };
+    validate(&Document {
+        version: 1,
+        entries: vec![entry.clone()],
+    })?;
     if let Some(index) = document
         .entries
         .iter()
@@ -163,7 +199,11 @@ pub fn write_project_status(
     document
         .entries
         .sort_by_key(|entry| entry.folder_name.to_lowercase());
-    let bytes = serde_json::to_vec_pretty(&document).map_err(|error| error.to_string())?;
+    save_document(path, parent, &document)
+}
+
+fn save_document(path: &Path, parent: &Path, document: &Document) -> Result<usize, String> {
+    let bytes = serde_json::to_vec_pretty(document).map_err(|error| error.to_string())?;
     if bytes.len() > MAX_STATUS_BYTES {
         return Err("Status JSON exceeds the 1 MiB limit".into());
     }
@@ -175,6 +215,47 @@ pub fn write_project_status(
         .map_err(|error| error.to_string())?;
     temporary.persist(path).map_err(|error| error.to_string())?;
     Ok(bytes.len())
+}
+
+/// Removes the point only if the entry still matches the snapshot shown in the viewer.
+pub fn dismiss_point(
+    path: &Path,
+    folder_name: &str,
+    session_id: Option<&str>,
+    branch: &str,
+    updated_at: &str,
+    point_index: usize,
+) -> Result<bool, String> {
+    let parent = path.parent().ok_or("Status directory unavailable")?;
+    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let lock = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(path.with_extension("lock"))
+        .map_err(|error| error.to_string())?;
+    lock.lock()
+        .map_err(|error| format!("Unable to lock status JSON: {error}"))?;
+    let mut document = read_document(path)?;
+    let Some(entry_index) = document.entries.iter().position(|entry| {
+        entry.folder_name == folder_name
+            && entry.session_id.as_deref() == session_id
+            && entry.branch == branch
+            && entry.updated_at == updated_at
+    }) else {
+        return Ok(false);
+    };
+    if point_index >= document.entries[entry_index].points.len() {
+        return Ok(false);
+    }
+    document.entries[entry_index].points.remove(point_index);
+    if document.entries[entry_index].points.is_empty() {
+        document.entries.remove(entry_index);
+    }
+    validate(&document)?;
+    save_document(path, parent, &document)?;
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -190,6 +271,7 @@ mod tests {
                 text: text.into(),
                 done: false,
                 link: None,
+                submitted_at: None,
             }],
         )
         .unwrap();
@@ -237,6 +319,7 @@ mod tests {
                 text: "legacy".into(),
                 done: false,
                 link: None,
+                submitted_at: None,
             }],
             updated_at: chrono::Utc::now().to_rfc3339(),
         };
@@ -276,6 +359,7 @@ mod tests {
                 text: "activity".into(),
                 done: true,
                 link: Some("https://example.com/pr/1".into()),
+                submitted_at: None,
             }]
         };
         write_project_status(
@@ -302,6 +386,67 @@ mod tests {
     }
 
     #[test]
+    fn retains_submission_times_for_unchanged_points() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("status.json");
+        write(&path, "session".into(), "existing");
+        let original = read_document(&path).unwrap().entries[0].points[0]
+            .submitted_at
+            .clone();
+        write_project_status(
+            &path,
+            "project".into(),
+            "session".into(),
+            "main".into(),
+            vec![
+                Point {
+                    text: "existing".into(),
+                    done: false,
+                    link: None,
+                    submitted_at: None,
+                },
+                Point {
+                    text: "new".into(),
+                    done: false,
+                    link: None,
+                    submitted_at: None,
+                },
+            ],
+        )
+        .unwrap();
+        let points = &read_document(&path).unwrap().entries[0].points;
+        assert_eq!(points[0].submitted_at, original);
+        assert!(points[1].submitted_at.is_some());
+    }
+
+    #[test]
+    fn dismisses_a_snapshot_point_and_removes_an_empty_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("status.json");
+        write(&path, "session".into(), "only point");
+        let entry = read_document(&path).unwrap().entries.remove(0);
+        assert!(!dismiss_point(
+            &path,
+            &entry.folder_name,
+            entry.session_id.as_deref(),
+            &entry.branch,
+            "outdated",
+            0,
+        )
+        .unwrap());
+        assert!(dismiss_point(
+            &path,
+            &entry.folder_name,
+            entry.session_id.as_deref(),
+            &entry.branch,
+            &entry.updated_at,
+            0,
+        )
+        .unwrap());
+        assert!(read_document(&path).unwrap().entries.is_empty());
+    }
+
+    #[test]
     fn rejects_invalid_updates_without_changing_saved_data() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("status.json");
@@ -321,7 +466,8 @@ mod tests {
                 vec![Point {
                     text: text.into(),
                     done: false,
-                    link: link.map(str::to_owned)
+                    link: link.map(str::to_owned),
+                    submitted_at: None,
                 }]
             )
             .is_err());
@@ -342,7 +488,8 @@ mod tests {
             vec![Point {
                 text: "x".repeat(MAX_STATUS_BYTES),
                 done: false,
-                link: None
+                link: None,
+                submitted_at: None,
             }]
         )
         .is_err());
@@ -370,7 +517,8 @@ mod tests {
             vec![Point {
                 text: "text".into(),
                 done: false,
-                link: None
+                link: None,
+                submitted_at: None,
             }]
         )
         .is_err());

@@ -6,7 +6,7 @@ The MCP manages `~/.local/share/ctx-ppteer/status.json`, shared with the desktop
 
 ## Status schema and MCP
 
-The schema is defined in [status.schema.json](status.schema.json). The document has version `1` and an `entries` array. Each entry stores `folder_name`, nullable `session_id`, `branch`, `points`, and a server-generated RFC 3339 `updated_at` timestamp. Points contain plain `text`, `done`, and an optional HTTP or HTTPS `link`.
+The schema is defined in [status.schema.json](status.schema.json). The document has version `1` and an `entries` array. Each entry stores `folder_name`, nullable `session_id`, `branch`, `points`, and a server-generated RFC 3339 `updated_at` timestamp. Points contain plain `text`, `done`, an optional HTTP or HTTPS `link`, and a server-generated `submitted_at` timestamp that is retained while the point is unchanged.
 
 Both MCP tools require `folder_name` and a non-empty real `session_id`. `read_status` returns only the matching project's session record. `write_status` also accepts `branch` and the complete revised `points` list, replacing that record. Agents read first, then revise text, completion flags, and links. Omitted points are removed; superseded text is not retained as history. Anonymous writes and project-wide MCP reads are not supported. Existing records with a null session ID remain viewable for compatibility.
 

@@ -659,6 +659,30 @@ fn get_snapshot(state: State<'_, Arc<ViewerState>>) -> Snapshot {
     state.snapshot.lock().unwrap().clone()
 }
 #[tauri::command]
+fn dismiss_point(
+    folder_name: String,
+    session_id: Option<String>,
+    branch: String,
+    updated_at: String,
+    point_index: usize,
+    app: AppHandle,
+    state: State<'_, Arc<ViewerState>>,
+) -> Result<(), String> {
+    let path = settings::status_path()?;
+    if !status_file::dismiss_point(
+        &path,
+        &folder_name,
+        session_id.as_deref(),
+        &branch,
+        &updated_at,
+        point_index,
+    )? {
+        return Err("This point changed before it could be dismissed. Please try again.".into());
+    }
+    update(&app, &state);
+    Ok(())
+}
+#[tauri::command]
 fn get_settings(app: AppHandle) -> Result<Settings, String> {
     load_settings(&app)
 }
@@ -1059,6 +1083,7 @@ pub fn run() {
         .manage(state.clone())
         .invoke_handler(tauri::generate_handler![
             get_snapshot,
+            dismiss_point,
             get_settings,
             reset_settings,
             open_settings,
