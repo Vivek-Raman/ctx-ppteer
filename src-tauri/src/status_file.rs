@@ -1,228 +1,379 @@
-use std::{fs, io::Write, path::Path};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use std::{fs, fs::OpenOptions, io::Write, path::Path};
 
 pub const MAX_STATUS_BYTES: usize = 1024 * 1024;
 
-pub fn read_project_status(path: &Path, folder_name: &str) -> Result<Option<String>, String> {
-    let markdown = read_markdown(path)?;
-    let title = project_title(folder_name)?;
-    Ok(project_section(&markdown, &title).map(str::to_owned))
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Point {
+    pub text: String,
+    #[serde(default)]
+    pub done: bool,
+    /// Optional HTTPS or HTTP URL; the viewer renders the point text as a link.
+    #[serde(default)]
+    pub link: Option<String>,
 }
 
-pub fn write_project_status(path: &Path, folder_name: &str, status: &str) -> Result<usize, String> {
-    write_project_status_with_sort_order(path, folder_name, status, "project-directory-asc")
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Entry {
+    pub folder_name: String,
+    pub session_id: Option<String>,
+    pub branch: String,
+    pub points: Vec<Point>,
+    pub updated_at: String,
 }
 
-pub fn write_project_status_with_sort_order(
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Document {
+    pub version: u32,
+    pub entries: Vec<Entry>,
+}
+
+impl Default for Document {
+    fn default() -> Self {
+        Self {
+            version: 1,
+            entries: vec![],
+        }
+    }
+}
+
+fn single_line(value: &str) -> bool {
+    !value.trim().is_empty() && !value.contains(['\n', '\r'])
+}
+
+fn validate(document: &Document) -> Result<(), String> {
+    if document.version != 1 {
+        return Err("Unsupported status schema version".into());
+    }
+    for entry in &document.entries {
+        if !single_line(&entry.folder_name)
+            || !single_line(&entry.branch)
+            || entry.session_id.as_ref().is_some_and(|id| !single_line(id))
+            || entry.points.is_empty()
+        {
+            return Err("Folder, branch, and supplied session ID must be non-empty single lines; points are required".into());
+        }
+        for point in &entry.points {
+            if point.text.trim().is_empty()
+                || point.link.as_ref().is_some_and(|link| {
+                    !(link
+                        .strip_prefix("https://")
+                        .or_else(|| link.strip_prefix("http://"))
+                        .is_some_and(|rest| !rest.is_empty()))
+                        || link.chars().any(char::is_whitespace)
+                })
+            {
+                return Err(
+                    "Points need text and links must use HTTP or HTTPS without whitespace".into(),
+                );
+            }
+        }
+        chrono::DateTime::parse_from_rfc3339(&entry.updated_at)
+            .map_err(|_| "Invalid status timestamp")?;
+    }
+    let mut keys = std::collections::HashSet::new();
+    for entry in &document.entries {
+        if let Some(id) = &entry.session_id {
+            if !keys.insert((&entry.folder_name, id)) {
+                return Err("Duplicate project/session record".into());
+            }
+        }
+    }
+    Ok(())
+}
+
+pub fn read_document(path: &Path) -> Result<Document, String> {
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(Document::default())
+        }
+        Err(error) => return Err(format!("Unable to read status JSON: {error}")),
+    };
+    if bytes.len() > MAX_STATUS_BYTES {
+        return Err("Status JSON exceeds the 1 MiB limit".into());
+    }
+    let document: Document =
+        serde_json::from_slice(&bytes).map_err(|error| format!("Invalid status JSON: {error}"))?;
+    validate(&document)?;
+    Ok(document)
+}
+
+pub fn read_project_status(
     path: &Path,
     folder_name: &str,
-    status: &str,
-    sort_order: &str,
-) -> Result<usize, String> {
-    if sort_order != "project-directory-asc" {
-        return Err(format!("Unsupported project sort order: {sort_order}"));
+    session_id: &str,
+) -> Result<Vec<Entry>, String> {
+    if !single_line(folder_name) || !single_line(session_id) {
+        return Err("Project folder and session ID must be non-empty single lines".into());
     }
-    let title = project_title(folder_name)?;
-    if status.trim().is_empty() {
-        return Err("The status text cannot be empty".into());
-    }
-
-    let section = format!("## {title}\n\n{}\n", status.trim());
-    let markdown = read_markdown(path)?;
-    let updated = if let Some((start, end)) = project_section_range(&markdown, &title) {
-        let separator = if end < markdown.len() && !markdown[end..].starts_with('\n') {
-            "\n"
-        } else {
-            ""
-        };
-        format!(
-            "{}{}{}{}",
-            &markdown[..start],
-            section,
-            separator,
-            &markdown[end..]
-        )
-    } else if markdown.trim().is_empty() {
-        section
-    } else {
-        format!("{}\n\n{section}", markdown.trim_end())
-    };
-    write_markdown(path, &sort_project_sections(&updated))
-}
-
-fn read_markdown(path: &Path) -> Result<String, String> {
-    match fs::read(path) {
-        Ok(bytes) => {
-            if bytes.len() > MAX_STATUS_BYTES {
-                return Err("The status document exceeds the 1 MiB limit".into());
-            }
-            String::from_utf8(bytes)
-                .map_err(|error| format!("Unable to decode status document as UTF-8: {error}"))
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
-        Err(error) => Err(format!("Unable to read status document: {error}")),
-    }
-}
-
-fn project_title(folder_name: &str) -> Result<String, String> {
-    if folder_name.is_empty() || folder_name.contains(['\n', '\r']) {
-        return Err("The project folder name must be a non-empty single line".into());
-    }
-    Ok(folder_name.to_owned())
-}
-
-fn project_section<'a>(markdown: &'a str, title: &str) -> Option<&'a str> {
-    let (start, end) = project_section_range(markdown, title)?;
-    let section = &markdown[start..end];
-    let header = format!("## {title}\n\n");
-    section.strip_prefix(&header).map(str::trim_end)
-}
-
-fn project_section_range(markdown: &str, title: &str) -> Option<(usize, usize)> {
-    let header = format!("## {title}");
-    let mut offset = 0;
-    let mut start = None;
-    for raw_line in markdown.split_inclusive('\n') {
-        let line = raw_line.trim_end_matches(['\n', '\r']);
-        if start.is_some() && line.starts_with("## ") {
-            return Some((start.unwrap(), offset));
-        }
-        if line == header {
-            start = Some(offset);
-        }
-        offset += raw_line.len();
-    }
-    start.map(|start| (start, markdown.len()))
-}
-
-fn sort_project_sections(markdown: &str) -> String {
-    let Some(first_section) = markdown.find("## ") else {
-        return markdown.to_owned();
-    };
-
-    let (preamble, sections) = markdown.split_at(first_section);
-    let mut sections = sections
-        .split("\n## ")
-        .enumerate()
-        .map(|(index, section)| {
-            let section = section.trim_end();
-            if index == 0 {
-                section.to_owned()
-            } else {
-                format!("## {section}")
-            }
+    Ok(read_document(path)?
+        .entries
+        .into_iter()
+        .filter(|entry| {
+            entry.folder_name == folder_name && entry.session_id.as_deref() == Some(session_id)
         })
-        .collect::<Vec<_>>();
-
-    sections.sort_unstable_by_key(|section| {
-        section
-            .lines()
-            .next()
-            .unwrap_or_default()
-            .trim_start_matches("## ")
-            .to_lowercase()
-    });
-
-    format!("{}{}\n", preamble, sections.join("\n\n"))
+        .collect())
 }
 
-pub fn write_markdown(path: &Path, markdown: &str) -> Result<usize, String> {
-    let bytes = markdown.as_bytes();
-    if bytes.len() > MAX_STATUS_BYTES {
-        return Err("The status document exceeds the 1 MiB limit".into());
+/// Lock a stable sidecar, not the JSON inode replaced by atomic writes.
+pub fn write_project_status(
+    path: &Path,
+    folder_name: String,
+    session_id: String,
+    branch: String,
+    points: Vec<Point>,
+) -> Result<usize, String> {
+    let entry = Entry {
+        folder_name,
+        session_id: Some(session_id),
+        branch,
+        points,
+        updated_at: chrono::Utc::now().to_rfc3339(),
+    };
+    validate(&Document {
+        version: 1,
+        entries: vec![entry.clone()],
+    })?;
+    let parent = path.parent().ok_or("Status directory unavailable")?;
+    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let lock = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(path.with_extension("lock"))
+        .map_err(|error| error.to_string())?;
+    lock.lock()
+        .map_err(|error| format!("Unable to lock status JSON: {error}"))?;
+    let mut document = read_document(path)?;
+    if let Some(index) = document
+        .entries
+        .iter()
+        .position(|old| old.folder_name == entry.folder_name && old.session_id == entry.session_id)
+    {
+        document.entries[index] = entry;
+    } else {
+        document.entries.push(entry);
     }
-    let parent = path
-        .parent()
-        .filter(|parent| parent.is_dir())
-        .ok_or_else(|| {
-            format!(
-                "The status file parent directory does not exist: {}",
-                path.display()
-            )
-        })?;
-    let mut temporary = tempfile::NamedTempFile::new_in(parent)
-        .map_err(|error| format!("Unable to prepare status update: {error}"))?;
+    document
+        .entries
+        .sort_by_key(|entry| entry.folder_name.to_lowercase());
+    let bytes = serde_json::to_vec_pretty(&document).map_err(|error| error.to_string())?;
+    if bytes.len() > MAX_STATUS_BYTES {
+        return Err("Status JSON exceeds the 1 MiB limit".into());
+    }
+    let mut temporary =
+        tempfile::NamedTempFile::new_in(parent).map_err(|error| error.to_string())?;
     temporary
-        .write_all(bytes)
+        .write_all(&bytes)
         .and_then(|()| temporary.as_file().sync_all())
-        .map_err(|error| format!("Unable to write status update: {error}"))?;
-    temporary
-        .persist(path)
-        .map_err(|error| format!("Unable to replace status document: {}", error.error))?;
+        .map_err(|error| error.to_string())?;
+    temporary.persist(path).map_err(|error| error.to_string())?;
     Ok(bytes.len())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
+    fn write(path: &Path, session: String, text: &str) {
+        write_project_status(
+            path,
+            "project".into(),
+            session,
+            "main".into(),
+            vec![Point {
+                text: text.into(),
+                done: false,
+                link: None,
+            }],
+        )
+        .unwrap();
+    }
     #[test]
-    fn replaces_status_content() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("status.md");
-        std::fs::write(&path, "old").unwrap();
-        assert_eq!(write_markdown(&path, "# Current").unwrap(), 9);
-        assert_eq!(std::fs::read_to_string(path).unwrap(), "# Current");
+    fn sessions_replace_only_their_own_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("status.json");
+        write(&path, "a".into(), "first");
+        write(&path, "b".into(), "other");
+        write(&path, "a".into(), "updated");
+        let document = read_document(&path).unwrap();
+        assert_eq!(document.entries.len(), 2);
+        assert_eq!(document.entries[0].points[0].text, "updated");
+        assert_eq!(document.entries[1].points[0].text, "other");
+    }
+    #[test]
+    fn reads_only_the_requested_project_session_and_rejects_empty_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("status.json");
+        write(&path, "a".into(), "own");
+        write(&path, "b".into(), "other");
+        let entries = read_project_status(&path, "project", "a").unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].points[0].text, "own");
+        assert!(read_project_status(&path, "another-project", "a")
+            .unwrap()
+            .is_empty());
+        assert!(read_project_status(&path, "project", "missing")
+            .unwrap()
+            .is_empty());
+        assert!(read_project_status(&path, "project", "").is_err());
+        assert!(read_project_status(&path, "project", "a\nb").is_err());
     }
 
     #[test]
-    fn rejects_content_over_the_limit() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("status.md");
-        assert!(write_markdown(&path, &"x".repeat(MAX_STATUS_BYTES + 1)).is_err());
-        assert!(!path.exists());
+    fn legacy_anonymous_records_remain_viewable_but_are_not_returned_by_scoped_reads() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("status.json");
+        let legacy = Entry {
+            folder_name: "project".into(),
+            session_id: None,
+            branch: "main".into(),
+            points: vec![Point {
+                text: "legacy".into(),
+                done: false,
+                link: None,
+            }],
+            updated_at: chrono::Utc::now().to_rfc3339(),
+        };
+        fs::write(
+            &path,
+            serde_json::to_vec(&Document {
+                version: 1,
+                entries: vec![legacy],
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        write(&path, "a".into(), "own");
+        assert_eq!(read_document(&path).unwrap().entries.len(), 2);
+        assert_eq!(read_project_status(&path, "project", "a").unwrap().len(), 1);
     }
 
     #[test]
-    fn replaces_only_the_requested_project_section() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("status.md");
-        write_project_status(&path, "ctx-ppteer", "main\n\n- First status.").unwrap();
-        write_project_status(&path, "other-project", "develop\n\n- Other status.").unwrap();
-        write_project_status(&path, "ctx-ppteer", "feature/status\n\n- Updated status.").unwrap();
-
-        assert_eq!(
-            read_project_status(&path, "ctx-ppteer").unwrap(),
-            Some("feature/status\n\n- Updated status.".into())
-        );
-        assert_eq!(
-            read_project_status(&path, "other-project").unwrap(),
-            Some("develop\n\n- Other status.".into())
-        );
+    fn parallel_writers_preserve_all_sessions() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("status.json");
+        std::thread::scope(|scope| {
+            for i in 0..24 {
+                let path = &path;
+                scope.spawn(move || write(path, i.to_string(), "activity"));
+            }
+        });
+        assert_eq!(read_document(&path).unwrap().entries.len(), 24);
+    }
+    #[test]
+    fn preserves_other_projects_and_updates_branch() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("status.json");
+        write(&path, "session".into(), "original");
+        let points = || {
+            vec![Point {
+                text: "activity".into(),
+                done: true,
+                link: Some("https://example.com/pr/1".into()),
+            }]
+        };
+        write_project_status(
+            &path,
+            "another".into(),
+            "session".into(),
+            "develop".into(),
+            points(),
+        )
+        .unwrap();
+        write_project_status(
+            &path,
+            "project".into(),
+            "session".into(),
+            "feature/json".into(),
+            points(),
+        )
+        .unwrap();
+        let document = read_document(&path).unwrap();
+        assert_eq!(document.entries.len(), 2);
+        assert_eq!(document.entries[0].folder_name, "another");
+        assert_eq!(document.entries[1].branch, "feature/json");
+        assert!(document.entries[1].points[0].done);
     }
 
     #[test]
-    fn rejects_invalid_folder_names() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("status.md");
-        assert!(write_project_status(&path, "", "main").is_err());
-        assert!(write_project_status(&path, "project\nname", "main").is_err());
+    fn rejects_invalid_updates_without_changing_saved_data() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("status.json");
+        write(&path, "session".into(), "original");
+        let before = fs::read(&path).unwrap();
+        for (session, text, link) in [
+            ("", "text", None),
+            ("session", " ", None),
+            ("session", "text", Some("javascript:alert(1)")),
+            ("session", "text", Some("https://")),
+        ] {
+            assert!(write_project_status(
+                &path,
+                "project".into(),
+                session.to_owned(),
+                "main".into(),
+                vec![Point {
+                    text: text.into(),
+                    done: false,
+                    link: link.map(str::to_owned)
+                }]
+            )
+            .is_err());
+        }
+        assert!(write_project_status(
+            &path,
+            "project".into(),
+            "session".into(),
+            "main".into(),
+            vec![]
+        )
+        .is_err());
+        assert!(write_project_status(
+            &path,
+            "project".into(),
+            "session".into(),
+            "main".into(),
+            vec![Point {
+                text: "x".repeat(MAX_STATUS_BYTES),
+                done: false,
+                link: None
+            }]
+        )
+        .is_err());
+        assert_eq!(fs::read(path).unwrap(), before);
     }
 
     #[test]
-    fn preserves_the_folder_name_in_the_heading() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("status.md");
-
-        write_project_status(&path, "myAPI-tool_v2", "main").unwrap();
-
-        assert_eq!(
-            std::fs::read_to_string(path).unwrap(),
-            "## myAPI-tool_v2\n\nmain\n"
-        );
+    fn rejects_future_schema_versions() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("status.json");
+        fs::write(&path, r#"{"version":2,"entries":[]}"#).unwrap();
+        assert!(read_document(&path).is_err());
     }
 
     #[test]
-    fn sorts_project_sections_by_folder_name() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("status.md");
-
-        write_project_status(&path, "zebra", "main").unwrap();
-        write_project_status(&path, "Alpha", "main").unwrap();
-        write_project_status(&path, "middle", "main").unwrap();
-
-        assert_eq!(
-            std::fs::read_to_string(path).unwrap(),
-            "## Alpha\n\nmain\n\n## middle\n\nmain\n\n## zebra\n\nmain\n"
-        );
+    fn malformed_json_is_preserved() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("status.json");
+        fs::write(&path, "broken").unwrap();
+        assert!(write_project_status(
+            &path,
+            "project".into(),
+            "session".into(),
+            "main".into(),
+            vec![Point {
+                text: "text".into(),
+                done: false,
+                link: None
+            }]
+        )
+        .is_err());
+        assert_eq!(fs::read_to_string(path).unwrap(), "broken");
     }
 }

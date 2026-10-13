@@ -15,7 +15,7 @@ const MAX_BYTES: u64 = 1024 * 1024;
 #[derive(Clone, Serialize)]
 pub struct Snapshot {
     pub path: Option<String>,
-    pub markdown: String,
+    pub document: crate::status_file::Document,
     pub revision: u64,
     pub health: String,
     pub error: Option<String>,
@@ -32,7 +32,7 @@ pub fn new_viewer_state() -> Arc<ViewerState> {
         path: Mutex::new(None),
         snapshot: Mutex::new(Snapshot {
             path: None,
-            markdown: String::new(),
+            document: crate::status_file::Document::default(),
             revision: 0,
             health: "waiting".into(),
             error: None,
@@ -53,7 +53,7 @@ fn read_snapshot(path: &Path, revision: u64, previous: &Snapshot) -> Snapshot {
         });
     let stale_snapshot = || Snapshot {
         path: Some(path.display().to_string()),
-        markdown: previous.markdown.clone(),
+        document: previous.document.clone(),
         revision,
         health: "stale".into(),
         error: None,
@@ -73,7 +73,7 @@ fn read_snapshot(path: &Path, revision: u64, previous: &Snapshot) -> Snapshot {
         },
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Snapshot {
             health: "waiting".into(),
-            error: Some("Waiting for the file to appear".into()),
+            error: None,
             modified_at: None,
             ..stale_snapshot()
         },
@@ -81,17 +81,15 @@ fn read_snapshot(path: &Path, revision: u64, previous: &Snapshot) -> Snapshot {
             error: Some(format!("Unable to read file: {error}")),
             ..stale_snapshot()
         },
-        Ok(_) => match fs::read(path)
-            .and_then(|bytes| String::from_utf8(bytes).map_err(std::io::Error::other))
-        {
-            Ok(markdown) => Snapshot {
-                markdown,
+        Ok(_) => match crate::status_file::read_document(path) {
+            Ok(document) => Snapshot {
+                document,
                 health: "current".into(),
                 error: None,
                 ..stale_snapshot()
             },
             Err(error) => Snapshot {
-                error: Some(format!("Unable to decode UTF-8: {error}")),
+                error: Some(error),
                 ..stale_snapshot()
             },
         },

@@ -2,62 +2,36 @@
   import { onMount } from "svelte";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { command } from "./commands";
-  import { renderMarkdown } from "./markdown";
   import { applyPrimaryColor, applyTheme, systemTheme } from "./theme";
-  import type { Settings, Snapshot } from "./app-types";
+  import type { Settings, Snapshot, StatusEntry } from "./app-types";
 
   let revision = -1;
   let selectedText = false;
   let pending: Snapshot | null = null;
-  let documentHtml = "";
+  let entries: StatusEntry[] = [];
+  let statusError = "";
+  $: projects = [...new Set(entries.map((entry) => entry.folder_name))].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
   let settings: Settings | null = null;
   let windowFocused = true;
-  let markdown = "";
-  let editing = false;
-  let saving = false;
-  let saveError = "";
-
   const themes = ["system", "light", "dark"] as const;
   const textScales = [0.85, 1, 1.15, 1.35];
 
   function applySnapshot(value: Snapshot) {
-    if (typeof value.revision === "number" && value.revision <= revision) return;
-    if (typeof value.revision === "number") revision = value.revision;
-    if (selectedText || editing) { pending = value; return; }
+    if (value.revision <= revision) return;
+    if (selectedText) { pending = value; return; }
+    revision = value.revision;
     pending = null;
-    if (typeof value.markdown === "string") {
-      markdown = value.markdown;
-      documentHtml = renderMarkdown(value.markdown);
-    }
+    entries = value.document.entries;
+    statusError = value.error ?? "";
   }
-  function updateSelection() { selectedText = Boolean(document.getSelection()?.toString()); if (!selectedText && pending) applySnapshot(pending); }
-  function startEditing() { editing = true; saveError = ""; }
-  function handleDocumentDoubleClick() {
-    if (settings?.doubleClickToEdit ?? true) startEditing();
+  function updateSelection() {
+    selectedText = Boolean(document.getSelection()?.toString());
+    if (!selectedText && pending) applySnapshot(pending);
   }
-  function cancelEditing() {
-    editing = false;
-    saveError = "";
-    if (pending) applySnapshot(pending);
-  }
-  async function saveMarkdown() {
-    saving = true;
-    saveError = "";
-    try {
-      await command("save_markdown", { markdown });
-      editing = false;
-    } catch (error) {
-      saveError = error instanceof Error ? error.message : "Unable to save changes";
-    } finally {
-      saving = false;
-    }
-  }
-  function handleEditorKeydown(event: KeyboardEvent) {
-    if (event.key === "Escape") cancelEditing();
-    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-      event.preventDefault();
-      if (!saving) void saveMarkdown();
-    }
+  function safeLink(link: string | null) {
+    if (!link) return null;
+    try { const url = new URL(link); return ["https:", "http:"].includes(url.protocol) ? url.href : null; }
+    catch { return null; }
   }
 
   async function cycleTheme() {
@@ -116,27 +90,29 @@
   </svg>
   <div class="app-chrome" data-tauri-drag-region aria-hidden="true"></div>
   <div class="document-actions" class:window-unfocused={!windowFocused}>
-    {#if editing}
-      <button class="ghost-button" onclick={cancelEditing} disabled={saving}>Cancel</button>
-      <button class="save-button" onclick={() => void saveMarkdown()} disabled={saving}>{saving ? "Saving..." : "Save"}</button>
-    {:else}
-      <button class="ghost-button" onclick={startEditing}>Edit</button>
       <button class="icon-button" onclick={() => void cycleTheme()} aria-label={`Theme: ${settings?.theme ?? "system"}. Click to change`} title={`Theme: ${settings?.theme ?? "system"}`}>
         {settings?.theme === "dark" ? "☾" : settings?.theme === "light" ? "☀" : "◐"}
       </button>
       <button class="icon-button" onclick={() => void changeTextScale(-1)} disabled={!settings || settings.textScale <= textScales[0]} aria-label="Decrease text size" title="Decrease text size">A−</button>
       <button class="icon-button" onclick={() => void changeTextScale(1)} disabled={!settings || settings.textScale >= textScales[textScales.length - 1]} aria-label="Increase text size" title="Increase text size">A+</button>
       <button onclick={() => void command("open_settings")}>Settings</button>
-    {/if}
   </div>
-  {#if editing}
-    <section class="editor-shell" aria-label="Markdown editor">
-      <textarea bind:value={markdown} onkeydown={handleEditorKeydown} aria-label="Markdown source"></textarea>
-      {#if saveError}<p class="save-error" role="alert">{saveError}</p>{/if}
-    </section>
-  {:else}
-    <section class="document" aria-label="Markdown document" onselectstart={() => selectedText = true} ondblclick={handleDocumentDoubleClick}>{@html documentHtml}</section>
-  {/if}
+  <section class="document" aria-label="Project status" onselectstart={() => selectedText = true}>
+    {#each projects as folder}
+      <h2>{folder}</h2>
+      {#each [...new Set(entries.filter((entry) => entry.folder_name === folder).map((entry) => entry.branch))] as branch}
+        <p>{branch}</p>
+        <ul>
+          {#each entries.filter((entry) => entry.folder_name === folder && entry.branch === branch) as entry}
+            {#each entry.points as point}
+              <li>{#if point.done}<strong>DONE</strong>:{" "}{/if}{#if safeLink(point.link)}<a href={safeLink(point.link)} target="_blank" rel="noopener noreferrer">{point.text}</a>{:else}{point.text}{/if}</li>
+            {/each}
+          {/each}
+        </ul>
+      {/each}
+    {/each}
+    {#if statusError}<p class="status-error" role="alert">{statusError}</p>{/if}
+  </section>
 </main>
 
 <style>
@@ -148,11 +124,6 @@
   .document-actions button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .icon-button { min-width: 1.8rem; padding-inline: 0.35rem !important; }
   .document-actions.window-unfocused { pointer-events: none; opacity: 0; }
-  .ghost-button { border: 1px solid var(--border); color: var(--text); background: transparent; }
-  .save-button { color: white; background: var(--accent); }
-  .editor-shell { display: flex; flex: 1; flex-direction: column; min-height: 0; padding: 14px 16px 40px; }
-  textarea { flex: 1; min-height: 0; resize: none; border: 0; padding: 0; color: var(--text); background: transparent; font: calc(1rem * var(--text-scale))/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
-  textarea:focus { outline: 0; }
-  .save-error { margin: 0.5rem 0 0; color: #c43d35; font-size: 0.8rem; }
+  .status-error { color: #c43d35; font-size: 0.8rem; }
   @media (max-width: 440px), (max-height: 360px) { .line-art-extra { display: none; } }@media (max-width: 340px), (max-height: 280px) { .line-art-medium { display: none; } }@media (prefers-reduced-motion: reduce) { .line-art animate, .bottom-line-art animate { display: none; } }
 </style>

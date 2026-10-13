@@ -13,7 +13,6 @@ use tauri::{
     path::BaseDirectory,
     AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
-use tauri_plugin_dialog::DialogExt;
 use toml_edit::{value, Array, DocumentMut};
 
 mod app_settings;
@@ -23,8 +22,8 @@ pub mod settings;
 pub mod status_file;
 
 use app_settings::{
-    default_source_path, ensure_default_source, load as load_settings, restore_window_state,
-    save as save_settings, save_window_state, Settings, PROJECT_DIRECTORY_ASC,
+    default_settings, load as load_settings, restore_window_state, save as save_settings,
+    save_window_state, Settings, PROJECT_DIRECTORY_ASC,
 };
 use app_state::{new_viewer_state, start_watcher, update, Snapshot, ViewerState};
 
@@ -660,112 +659,25 @@ fn get_snapshot(state: State<'_, Arc<ViewerState>>) -> Snapshot {
     state.snapshot.lock().unwrap().clone()
 }
 #[tauri::command]
-fn save_markdown(
-    markdown: String,
-    app: AppHandle,
-    state: State<'_, Arc<ViewerState>>,
-) -> Result<(), String> {
-    let path = state
-        .path
-        .lock()
-        .map_err(|_| "State unavailable")?
-        .clone()
-        .ok_or("No Markdown source is selected")?;
-    status_file::write_markdown(&path, &markdown)?;
-    update(&app, &state);
-    Ok(())
-}
-#[tauri::command]
-fn set_source(
-    path: String,
-    app: AppHandle,
-    state: State<'_, Arc<ViewerState>>,
-) -> Result<(), String> {
-    if path.trim().is_empty() {
-        return Err("A source path is required".into());
-    }
-    let path = PathBuf::from(path);
-    let mut settings = load_settings(&app)?;
-    settings.source_path = path.display().to_string();
-    save_settings(&app, &settings)?;
-    let _ = app.emit("settings-update", &settings);
-    state
-        .path
-        .lock()
-        .map_err(|_| "State unavailable")?
-        .replace(path);
-    update(&app, &state);
-    Ok(())
-}
-#[tauri::command]
-fn use_default_source(
-    app: AppHandle,
-    state: State<'_, Arc<ViewerState>>,
-) -> Result<Settings, String> {
-    let path = ensure_default_source(&app)?;
-    let mut settings = load_settings(&app)?;
-    settings.source_path = path.display().to_string();
-    save_settings(&app, &settings)?;
-    let _ = app.emit("settings-update", &settings);
-    state
-        .path
-        .lock()
-        .map_err(|_| "State unavailable")?
-        .replace(path);
-    update(&app, &state);
-    Ok(settings)
-}
-#[tauri::command]
-fn get_default_source(app: AppHandle) -> Result<String, String> {
-    Ok(default_source_path(&app)?.display().to_string())
-}
-#[tauri::command]
 fn get_settings(app: AppHandle) -> Result<Settings, String> {
     load_settings(&app)
 }
 #[tauri::command]
-fn reveal_source(app: AppHandle) -> Result<(), String> {
-    let path = PathBuf::from(load_settings(&app)?.source_path);
-    let target = if path.exists() {
-        path
-    } else {
-        path.parent()
-            .map(Path::to_path_buf)
-            .ok_or("The source path has no parent directory")?
-    };
-
-    #[cfg(target_os = "macos")]
-    let mut command = {
-        let mut command = Command::new("open");
-        if target.is_file() {
-            command.arg("-R");
-        }
-        command.arg(&target);
-        command
-    };
-    #[cfg(target_os = "windows")]
-    let mut command = {
-        let mut command = Command::new("explorer.exe");
-        if target.is_file() {
-            command.arg(format!("/select,{}", target.display()));
-        } else {
-            command.arg(&target);
-        }
-        command
-    };
-    #[cfg(all(unix, not(target_os = "macos")))]
-    let mut command = Command::new("xdg-open");
-    #[cfg(all(unix, not(target_os = "macos")))]
-    command.arg(&target);
-
-    let status = command
-        .status()
-        .map_err(|e| format!("Unable to reveal {}: {e}", target.display()))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("Unable to reveal {}", target.display()))
-    }
+fn reset_settings(app: AppHandle, state: State<'_, Arc<ViewerState>>) -> Result<Settings, String> {
+    let settings = default_settings(&app)?;
+    app.get_webview_window("main")
+        .ok_or("Main window unavailable")?
+        .set_always_on_top(settings.pinned)
+        .map_err(|error| error.to_string())?;
+    save_settings(&app, &settings)?;
+    let _ = app.emit("settings-update", &settings);
+    state
+        .path
+        .lock()
+        .map_err(|_| "State unavailable")?
+        .replace(settings::status_path()?);
+    update(&app, &state);
+    Ok(settings)
 }
 #[tauri::command]
 fn open_settings(app: AppHandle) {
@@ -926,23 +838,6 @@ fn set_pinned(pinned: bool, app: AppHandle) -> Result<(), String> {
     let _ = app.emit("settings-update", settings);
     Ok(())
 }
-#[tauri::command]
-fn set_double_click_to_edit(double_click_to_edit: bool, app: AppHandle) -> Result<(), String> {
-    let mut settings = load_settings(&app)?;
-    settings.double_click_to_edit = double_click_to_edit;
-    save_settings(&app, &settings)?;
-    let _ = app.emit("settings-update", settings);
-    Ok(())
-}
-#[tauri::command]
-async fn pick_source(app: AppHandle) -> Option<String> {
-    app.dialog()
-        .file()
-        .add_filter("Markdown", &["md", "markdown", "txt"])
-        .blocking_pick_file()
-        .map(|p| p.to_string())
-}
-
 fn install_menu(app: &tauri::App) -> tauri::Result<()> {
     let handle = app.handle();
     let menu = Menu::default(handle)?;
@@ -1161,16 +1056,11 @@ ctx-ppteer = { command = "/Applications/ctx-ppteer", args = ["--mcp"] }
 pub fn run() {
     let state = new_viewer_state();
     tauri::Builder::default()
-        .plugin(tauri_plugin_dialog::init())
         .manage(state.clone())
         .invoke_handler(tauri::generate_handler![
             get_snapshot,
-            save_markdown,
-            set_source,
-            use_default_source,
-            get_default_source,
             get_settings,
-            reveal_source,
+            reset_settings,
             open_settings,
             set_appearance_settings,
             set_project_sort_order,
@@ -1180,8 +1070,6 @@ pub fn run() {
             install_mcp_for_harness,
             uninstall_mcp_for_harness,
             set_pinned,
-            set_double_click_to_edit,
-            pick_source
         ])
         .setup(|app| {
             install_menu(app)?;
@@ -1196,10 +1084,7 @@ pub fn run() {
             }
             let state = app.state::<Arc<ViewerState>>().inner().clone();
             let settings = load_settings(app.handle()).map_err(std::io::Error::other)?;
-            if settings.source_path.trim().is_empty() {
-                return Err(std::io::Error::other("Settings contain no sourcePath").into());
-            }
-            let path = PathBuf::from(settings.source_path);
+            let path = settings::status_path().map_err(std::io::Error::other)?;
             app.get_webview_window("main")
                 .ok_or_else(|| std::io::Error::other("Main window unavailable"))?
                 .set_always_on_top(settings.pinned)

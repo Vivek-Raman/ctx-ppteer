@@ -1,9 +1,18 @@
 export type Theme = "system" | "light" | "dark";
 export type ProjectSortOrder = "project-directory-asc";
 
+export type StatusPoint = { text: string; done: boolean; link: string | null };
+export type StatusEntry = {
+  folder_name: string;
+  session_id: string | null;
+  branch: string;
+  points: StatusPoint[];
+  updated_at: string;
+};
 export type Snapshot = {
-  markdown?: string;
-  revision?: number;
+  document: { version: number; entries: StatusEntry[] };
+  revision: number;
+  error: string | null;
 };
 
 export type AgentInstallation = {
@@ -35,11 +44,9 @@ export type SkillInstallation = {
 };
 
 export type Settings = {
-  sourcePath: string;
   theme: Theme;
   primaryColor: string;
   textScale: number;
   pinned: boolean;
-  doubleClickToEdit: boolean;
   projectSortOrder: ProjectSortOrder;
 };

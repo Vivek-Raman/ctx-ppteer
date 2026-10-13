@@ -19,7 +19,7 @@
         "minWidth": 260,
         "minHeight": 120,
         "resizable": true,
-        "alwaysOnTop": true,
+        "alwaysOnTop": false,
         "decorations": true,
         "hiddenTitle": true,
         "acceptFirstMouse": true,
@@ -50,7 +50,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "shortDescription": "Always-on-top Markdown status viewer",
-    "longDescription": "A lightweight viewer for a shared agent status Markdown file."
+    "shortDescription": "Always-on-top agent status viewer",
+    "longDescription": "A lightweight viewer for structured agent status points."
   }
 }

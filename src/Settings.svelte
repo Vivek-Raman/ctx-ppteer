@@ -12,9 +12,24 @@
   let skillError = "";
   let saving = false;
   let settingsError = "";
+  const primaryColors = [
+    { name: "Terracotta", value: "#c98c5a" },
+    { name: "Rose", value: "#c96b7b" },
+    { name: "Coral", value: "#d97757" },
+    { name: "Gold", value: "#c59a38" },
+    { name: "Olive", value: "#8b9b50" },
+    { name: "Sage", value: "#5f9b85" },
+    { name: "Teal", value: "#3f9a9a" },
+    { name: "Blue", value: "#5d8fc2" },
+    { name: "Violet", value: "#8a75bc" },
+  ];
 
-  async function chooseFile() { const path = await command<string | null>("pick_source"); if (path) await command("set_source", { path }); }
-  async function useDefaultFile() { settings = await command<Settings>("use_default_source"); }
+  async function resetSettings() {
+    saving = true; settingsError = "";
+    try { settings = await command<Settings>("reset_settings"); }
+    catch (error) { settingsError = error instanceof Error ? error.message : String(error); }
+    finally { saving = false; }
+  }
   async function saveAppearance() {
     if (!settings) return;
     saving = true; settingsError = "";
@@ -22,17 +37,15 @@
     catch (error) { settingsError = error instanceof Error ? error.message : String(error); }
     finally { saving = false; }
   }
+  function selectPrimaryColor(primaryColor: string) {
+    if (!settings) return;
+    settings.primaryColor = primaryColor;
+    void saveAppearance();
+  }
   async function saveProjectSortOrder() {
     if (!settings) return;
     saving = true; settingsError = "";
     try { await command("set_project_sort_order", { projectSortOrder: settings.projectSortOrder }); }
-    catch (error) { settingsError = error instanceof Error ? error.message : String(error); }
-    finally { saving = false; }
-  }
-  async function saveDoubleClickToEdit() {
-    if (!settings) return;
-    saving = true; settingsError = "";
-    try { await command("set_double_click_to_edit", { doubleClickToEdit: settings.doubleClickToEdit }); }
     catch (error) { settingsError = error instanceof Error ? error.message : String(error); }
     finally { saving = false; }
   }
@@ -68,10 +81,10 @@
 <main class="settings-page">
   <header><h1>Settings</h1><p>Choose what ctx-ppteer shows and how it appears.</p></header>
   {#if settings}
-    <section><label for="source">Markdown file</label><div class="file-picker"><input id="source" value={settings.sourcePath} readonly title={settings.sourcePath} /><button onclick={() => void chooseFile()}>Choose…</button></div><div class="source-actions"><button class="link-button" onclick={() => void useDefaultFile()}>Use default file</button><button class="link-button" onclick={() => void command("reveal_source")}>Reveal in file manager</button></div></section>
-    <section class="appearance"><label for="theme">Theme</label><select id="theme" bind:value={settings.theme} onchange={() => void saveAppearance()}><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select><label for="primary-color">Primary color</label><div class="color-control"><input id="primary-color" type="color" bind:value={settings.primaryColor} onchange={() => void saveAppearance()} /><code>{settings.primaryColor}</code></div><label for="text-size">Text size</label><select id="text-size" bind:value={settings.textScale} onchange={() => void saveAppearance()}><option value={0.85}>Small</option><option value={1}>Default</option><option value={1.15}>Large</option><option value={1.35}>Extra large</option></select></section>
+    <section class="appearance"><label for="theme">Theme</label><select id="theme" bind:value={settings.theme} onchange={() => void saveAppearance()}><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select><label for="primary-color">Primary color</label><div class="color-control"><input id="primary-color" type="color" bind:value={settings.primaryColor} onchange={() => void saveAppearance()} /><code>{settings.primaryColor}</code><div class="color-palette" aria-label="Curated primary colors">{#each primaryColors as color}<button class:active={settings.primaryColor.toLowerCase() === color.value.toLowerCase()} class="color-swatch" type="button" style:background-color={color.value} aria-label={color.name} title={color.name} onclick={() => selectPrimaryColor(color.value)}></button>{/each}</div></div><label for="text-size">Text size</label><select id="text-size" bind:value={settings.textScale} onchange={() => void saveAppearance()}><option value={0.85}>Small</option><option value={1}>Default</option><option value={1.15}>Large</option><option value={1.35}>Extra large</option></select></section>
     <section><label for="project-sort-order">Project note order</label><select id="project-sort-order" bind:value={settings.projectSortOrder} onchange={() => void saveProjectSortOrder()}><option value="project-directory-asc">Project directory A-Z</option></select></section>
-    <section><label class="checkbox"><input type="checkbox" bind:checked={settings.pinned} onchange={() => void saveAppearance()} /> Keep viewer always on top</label><label class="checkbox"><input type="checkbox" bind:checked={settings.doubleClickToEdit} onchange={() => void saveDoubleClickToEdit()} /> Double-click text to edit</label></section>
+    <section><label class="checkbox"><input type="checkbox" bind:checked={settings.pinned} onchange={() => void saveAppearance()} /> Keep viewer always on top</label></section>
+    <section class="reset"><div><h2>Reset settings</h2><p>Restore appearance, window behavior, and note order.</p></div><button onclick={() => void resetSettings()} disabled={saving}>Reset settings</button></section>
     <section class="integration"><div><h2>Agent integration</h2><p>Install the bundled skill into the locations used by each agent, then configure MCP separately when needed.</p></div>
       {#if skill}
         <div class="skill-targets" aria-label="Skill installation targets">{#each skill.targets as target}<div class="skill-target"><div><span>{target.name}</span><small>{target.path}</small></div><span class:installed={target.installed}>{target.installed ? target.upToDate ? "Skill installed" : "Skill update available" : "Skill not installed"}</span><button onclick={() => void installSkill(target.id)} disabled={installingSkill !== null}>{installingSkill === target.id ? "Installing…" : !target.installed ? "Install skill" : target.upToDate ? "Reinstall" : "Update skill"}</button></div>{/each}</div>
@@ -88,5 +101,5 @@
 
 <style>
   button { flex: none; border: 0; border-radius: 0.4rem; padding: 0.5rem 0.7rem; color: #111; background: #f2f2f2; font: inherit; font-size: 0.8rem; font-weight: 600; cursor: pointer; } button:disabled { cursor: wait; opacity: 0.65; }.error { color: #c43d35 !important; }
-  .settings-page { display: block; overflow: auto; padding: 28px; }.settings-page header { margin-bottom: 28px; }.settings-page h1 { margin: 0; font-size: 1.5rem; }.settings-page header p, .integration p { color: var(--muted); margin: 0.4rem 0 0; }.settings-page section { display: grid; gap: 0.6rem; margin: 0 0 24px; }.settings-page label { font-weight: 600; }.file-picker { display: flex; gap: 0.6rem; }.file-picker input, select { border: 1px solid var(--border); border-radius: 0.4rem; padding: 0.55rem 0.65rem; color: var(--text); background: var(--bg); font: inherit; }.file-picker input { flex: 1; min-width: 0; }.source-actions { display: flex; gap: 0.8rem; }.link-button { justify-self: start; padding: 0; color: var(--accent); background: transparent; font-weight: 500; }.appearance { grid-template-columns: 1fr 1fr; align-items: center; }.appearance select, .appearance .color-control { grid-column: 2; }.color-control { display: flex; align-items: center; gap: 0.65rem; }.color-control input { width: 2.4rem; height: 2rem; border: 1px solid var(--border); border-radius: 0.4rem; padding: 0.15rem; background: var(--bg); cursor: pointer; }.color-control code { color: var(--muted); font-size: 0.8rem; }.checkbox { display: flex; align-items: center; gap: 0.55rem; }.integration { padding-top: 1rem; border-top: 1px solid var(--border); }.integration h2 { margin: 0; font-size: 1rem; }.skill-targets, .agent-status { border: 1px solid var(--border); border-radius: 0.4rem; overflow: hidden; }.additional { display: grid; gap: 0.45rem; }.additional summary { color: var(--muted); cursor: pointer; font-size: 0.8rem; }.skill-target + .skill-target, .agent + .agent { border-top: 1px solid var(--border); }.skill-target, .agent { display: grid; grid-template-columns: minmax(130px, 1fr) 1fr auto; align-items: center; gap: 0.7rem; padding: 0.55rem 0.7rem; font-size: 0.8rem; }.skill-target small, .agent small { display: block; overflow: hidden; color: var(--muted); font-size: 0.7rem; text-align: left; text-overflow: ellipsis; white-space: nowrap; }.skill-target > span, .agent > span { color: var(--muted); }.skill-target > span.installed, .agent > span.mcp-registered { color: var(--accent); }.agent-error { margin: 0; color: #c43d35; font-size: 0.8rem; }.status { color: var(--muted); }
+  .settings-page { display: block; overflow: auto; padding: 28px; }.settings-page header { margin-bottom: 28px; }.settings-page h1 { margin: 0; font-size: 1.5rem; }.settings-page header p, .integration p, .reset p { color: var(--muted); margin: 0.4rem 0 0; }.settings-page section { display: grid; gap: 0.6rem; margin: 0 0 24px; }.settings-page label { font-weight: 600; }select { border: 1px solid var(--border); border-radius: 0.4rem; padding: 0.55rem 0.65rem; color: var(--text); background: var(--bg); font: inherit; }.appearance { grid-template-columns: 1fr 1fr; align-items: center; }.appearance select, .appearance .color-control { grid-column: 2; }.color-control { display: flex; flex-wrap: wrap; align-items: center; gap: 0.65rem; }.color-control input { width: 2.4rem; height: 2rem; border: 1px solid var(--border); border-radius: 0.4rem; padding: 0.15rem; background: var(--bg); cursor: pointer; }.color-control code { color: var(--muted); font-size: 0.8rem; }.color-palette { display: flex; flex-wrap: wrap; gap: 0.35rem; width: 100%; }.color-swatch { width: 1.45rem; height: 1.45rem; padding: 0; border: 2px solid transparent; border-radius: 50%; box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.12); }.color-swatch:hover { transform: scale(1.08); }.color-swatch.active { border-color: var(--text); box-shadow: 0 0 0 2px var(--bg), 0 0 0 3px var(--text); }.checkbox { display: flex; align-items: center; gap: 0.55rem; }.reset { grid-template-columns: 1fr auto; align-items: center; padding-top: 1rem; border-top: 1px solid var(--border); }.reset h2 { margin: 0; font-size: 1rem; }.integration { padding-top: 1rem; border-top: 1px solid var(--border); }.integration h2 { margin: 0; font-size: 1rem; }.skill-targets, .agent-status { border: 1px solid var(--border); border-radius: 0.4rem; overflow: hidden; }.additional { display: grid; gap: 0.45rem; }.additional summary { color: var(--muted); cursor: pointer; font-size: 0.8rem; }.skill-target + .skill-target, .agent + .agent { border-top: 1px solid var(--border); }.skill-target, .agent { display: grid; grid-template-columns: minmax(130px, 1fr) 1fr auto; align-items: center; gap: 0.7rem; padding: 0.55rem 0.7rem; font-size: 0.8rem; }.skill-target small, .agent small { display: block; overflow: hidden; color: var(--muted); font-size: 0.7rem; text-align: left; text-overflow: ellipsis; white-space: nowrap; }.skill-target > span, .agent > span { color: var(--muted); }.skill-target > span.installed, .agent > span.mcp-registered { color: var(--accent); }.agent-error { margin: 0; color: #c43d35; font-size: 0.8rem; }.status { color: var(--muted); }
 </style>

@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ctx-ppteer status document",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "entries"
+  ],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/entry"
+      }
+    }
+  },
+  "$defs": {
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "folder_name",
+        "session_id",
+        "branch",
+        "points",
+        "updated_at"
+      ],
+      "properties": {
+        "folder_name": {
+          "$ref": "#/$defs/line"
+        },
+        "session_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/line"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Real session ID. Null is supported only for reading legacy records; MCP writes require a non-empty string."
+        },
+        "branch": {
+          "$ref": "#/$defs/line"
+        },
+        "points": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/point"
+          }
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "line": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$"
+    },
+    "point": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "text"
+      ],
+      "properties": {
+        "text": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "done": {
+          "type": "boolean",
+          "default": false
+        },
+        "link": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^https?://\\S+$"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      }
+    }
+  }
+}

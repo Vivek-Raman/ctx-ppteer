@@ -2,9 +2,6 @@ use serde::{Deserialize, Serialize};
 use std::{fs, path::PathBuf};
 use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
 
-const DEFAULT_SOURCE_FILE: &str = "agent-status.md";
-const SETTINGS_DIRECTORY: &str = ".config/ctx-ppteer";
-const SETTINGS_FILE: &str = "settings.json";
 pub const PROJECT_DIRECTORY_ASC: &str = "project-directory-asc";
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -23,7 +20,6 @@ pub struct WindowState {
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
-    pub source_path: String,
     #[serde(default = "default_theme")]
     pub theme: String,
     #[serde(default = "default_primary_color")]
@@ -32,8 +28,6 @@ pub struct Settings {
     pub text_scale: f64,
     #[serde(default = "default_pinned")]
     pub pinned: bool,
-    #[serde(default = "default_double_click_to_edit")]
-    pub double_click_to_edit: bool,
     #[serde(default = "default_project_sort_order")]
     pub project_sort_order: String,
     #[serde(default)]
@@ -50,50 +44,25 @@ fn default_text_scale() -> f64 {
     1.0
 }
 fn default_pinned() -> bool {
-    true
-}
-fn default_double_click_to_edit() -> bool {
-    true
+    false
 }
 fn default_project_sort_order() -> String {
     PROJECT_DIRECTORY_ASC.into()
 }
 
-pub fn default_source_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let directory = app
-        .path()
-        .app_data_dir()
-        .map_err(|error| format!("Unable to find the application data directory: {error}"))?;
-    fs::create_dir_all(&directory)
-        .map_err(|error| format!("Unable to create the application data directory: {error}"))?;
-    Ok(directory.join(DEFAULT_SOURCE_FILE))
+fn settings_path(_app: &AppHandle) -> Result<PathBuf, String> {
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .ok_or("Unable to find home directory")?;
+    Ok(PathBuf::from(home).join(".config/ctx-ppteer/settings.json"))
 }
 
-pub fn ensure_default_source(app: &AppHandle) -> Result<PathBuf, String> {
-    let path = default_source_path(app)?;
-    if !path.exists() {
-        fs::write(&path, "")
-            .map_err(|error| format!("Unable to create {}: {error}", path.display()))?;
-    }
-    Ok(path)
-}
-
-fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let home = app
-        .path()
-        .home_dir()
-        .map_err(|error| format!("Unable to find the home directory: {error}"))?;
-    Ok(home.join(SETTINGS_DIRECTORY).join(SETTINGS_FILE))
-}
-
-fn default_settings(app: &AppHandle) -> Result<Settings, String> {
+pub fn default_settings(_app: &AppHandle) -> Result<Settings, String> {
     Ok(Settings {
-        source_path: ensure_default_source(app)?.display().to_string(),
         theme: default_theme(),
         primary_color: default_primary_color(),
         text_scale: default_text_scale(),
         pinned: default_pinned(),
-        double_click_to_edit: default_double_click_to_edit(),
         project_sort_order: default_project_sort_order(),
         window: None,
     })
@@ -251,5 +220,6 @@ mod tests {
 
         assert_eq!(settings.project_sort_order, PROJECT_DIRECTORY_ASC);
         assert_eq!(settings.primary_color, "#c98c5a");
+        assert!(!settings.pinned);
     }
 }

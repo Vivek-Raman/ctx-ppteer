@@ -21,6 +21,6 @@ main::after { bottom: 0; left: -28%; height: max(150px, 68%); opacity: 0.72; bac
 .document p, .document ul, .document ol, .document blockquote, .document pre, .document table { margin: 0 0 0.85em; }
 .document ul, .document ol { margin-left: 0; padding-left: 1.35em; }
 .document ul { list-style: none; }
-.document ul > li { position: relative; }
+.document ul > li { position: relative; white-space: pre-line; overflow-wrap: anywhere; }
 .document ul > li:not(.task-list-item)::before { position: absolute; right: calc(100% + 0.55em); content: "•"; }
 .document blockquote { margin-left: 0; padding-left: 12px; border-left: 3px solid var(--border); color: var(--muted); }.document code { padding: 2px 4px; border-radius: 3px; background: var(--code); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em; }.document pre { padding: 10px; border-radius: 5px; background: var(--code); overflow-x: auto; }.document pre code { padding: 0; background: transparent; }.document a { color: var(--accent); }.document table { border-collapse: collapse; display: block; overflow-x: auto; }.document th, .document td { border: 1px solid var(--border); padding: 4px 7px; text-align: left; white-space: nowrap; }.document th { background: var(--code); }.document input[type="checkbox"] { accent-color: var(--accent); margin-right: 5px; }
