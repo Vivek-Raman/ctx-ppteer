@@ -85,20 +85,17 @@
   async function dismissPoint(entry: StatusEntry, pointIndex: number) {
     const id = `${entry.folder_name}:${entry.session_id ?? ""}:${entry.updated_at}:${pointIndex}`;
     const removalKey = pointKey(entry, entry.points[pointIndex], pointIndex);
-    const entriesBeforeDismissal = entries;
     dismissing = id;
     pendingRemoval = removalKey;
-    entries = entries.map((candidate) => candidate === entry
-      ? { ...candidate, points: candidate.points.filter((_, index) => index !== pointIndex) }
-      : candidate);
     try {
-      await command("dismiss_point", { folderName: entry.folder_name, sessionId: entry.session_id, branch: entry.branch, updatedAt: entry.updated_at, pointIndex });
-      await new Promise<void>((resolve) => window.setTimeout(resolve, dismissalExitDuration + 30));
+      await Promise.all([
+        command("dismiss_point", { folderName: entry.folder_name, sessionId: entry.session_id, branch: entry.branch, updatedAt: entry.updated_at, pointIndex }),
+        new Promise<void>((resolve) => window.setTimeout(resolve, dismissalExitDuration)),
+      ]);
       pendingRemoval = "";
       applySnapshot(pending ?? await command<Snapshot>("get_snapshot"));
     } catch (error) {
       pendingRemoval = "";
-      entries = entriesBeforeDismissal;
       statusError = error instanceof Error ? error.message : String(error);
     } finally {
       dismissing = "";
@@ -179,7 +176,7 @@
               {#each entries.filter((entry) => entry.folder_name === folder && entry.branch === branch) as entry}
                 {#each entry.points as point, pointIndex (pointKey(entry, point, pointIndex))}
                   {@const pointId = `${entry.folder_name}:${entry.session_id ?? ""}:${entry.updated_at}:${pointIndex}`}
-                  <li class="status-point" class:expiring-soon={expiresSoon(point.submitted_at ?? entry.updated_at)} animate:moveWithoutScaling out:fly={{ x: 18, duration: dismissalExitDuration }}>
+                  <li class="status-point" class:removing={pendingRemoval === pointKey(entry, point, pointIndex)} class:expiring-soon={expiresSoon(point.submitted_at ?? entry.updated_at)} animate:moveWithoutScaling>
                     <span class="point-text">{#if point.done}<strong>DONE</strong>: {" "}{/if}{#if safeLink(point.link)}<a href={safeLink(point.link)} target="_blank" rel="noopener noreferrer">{point.text}</a>{:else}{point.text}{/if}</span>
                     <span class="point-actions">
                       <span class="point-age">{relativeTime(point.submitted_at ?? entry.updated_at)}</span>
@@ -208,6 +205,8 @@
   .document-actions.window-unfocused { pointer-events: none; opacity: 0; }
   .status-error { color: #c43d35; font-size: 0.8rem; }
   .status-point { position: relative; transition: opacity 160ms ease; }
+  .status-point.removing { pointer-events: none; animation: dismiss-point 320ms ease-in forwards; }
+  @keyframes dismiss-point { to { opacity: 0; transform: translateX(18px); } }
   .status-point.expiring-soon { opacity: 0.42; }
   .point-actions { position: absolute; top: 50%; right: 0; display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.14rem 0.28rem 0.14rem 0.5rem; border-radius: 999px; transform: translateY(-50%); opacity: 0; pointer-events: none; color: var(--muted); background: color-mix(in srgb, var(--bg) 72%, transparent); backdrop-filter: blur(10px) saturate(1.15); -webkit-backdrop-filter: blur(10px) saturate(1.15); box-shadow: 0 2px 8px color-mix(in srgb, var(--text) 8%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--bg) 28%, transparent); font-size: 0.78em; white-space: nowrap; transition: opacity 120ms ease; }
   .status-point:hover .point-actions, .status-point:focus-within .point-actions { opacity: 1; pointer-events: auto; }
