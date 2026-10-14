@@ -49,4 +49,5 @@ export type Settings = {
   textScale: number;
   pinned: boolean;
   projectSortOrder: ProjectSortOrder;
+  autoClearAfterMinutes: number | null;
 };

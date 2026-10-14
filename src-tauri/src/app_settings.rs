@@ -31,6 +31,8 @@ pub struct Settings {
     #[serde(default = "default_project_sort_order")]
     pub project_sort_order: String,
     #[serde(default)]
+    pub auto_clear_after_minutes: Option<u64>,
+    #[serde(default)]
     pub window: Option<WindowState>,
 }
 
@@ -64,6 +66,7 @@ pub fn default_settings(_app: &AppHandle) -> Result<Settings, String> {
         text_scale: default_text_scale(),
         pinned: default_pinned(),
         project_sort_order: default_project_sort_order(),
+        auto_clear_after_minutes: None,
         window: None,
     })
 }
@@ -221,5 +224,6 @@ mod tests {
         assert_eq!(settings.project_sort_order, PROJECT_DIRECTORY_ASC);
         assert_eq!(settings.primary_color, "#c98c5a");
         assert!(!settings.pinned);
+        assert_eq!(settings.auto_clear_after_minutes, None);
     }
 }

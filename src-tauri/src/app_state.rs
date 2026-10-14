@@ -108,6 +108,19 @@ pub fn update(app: &AppHandle, state: &ViewerState) {
     let _ = app.emit("source-update", snapshot);
 }
 
+pub fn clear_expired_points(app: &AppHandle, path: &Path) {
+    let Ok(settings) = crate::app_settings::load(app) else {
+        return;
+    };
+    let Some(minutes) = settings.auto_clear_after_minutes else {
+        return;
+    };
+    let _ = crate::status_file::prune_expired_points(
+        path,
+        Duration::from_secs(minutes.saturating_mul(60)),
+    );
+}
+
 pub fn start_watcher(app: AppHandle, state: Arc<ViewerState>) {
     thread::spawn(move || {
         let (tx, rx) = mpsc::channel();
@@ -133,6 +146,7 @@ pub fn start_watcher(app: AppHandle, state: Arc<ViewerState>) {
                     update(&app, &state);
                 }
                 if last_reconcile.elapsed() >= Duration::from_secs(30) {
+                    clear_expired_points(&app, &path);
                     update(&app, &state);
                     last_reconcile = Instant::now();
                 }

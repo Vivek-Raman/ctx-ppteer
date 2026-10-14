@@ -25,7 +25,9 @@ use app_settings::{
     default_settings, load as load_settings, restore_window_state, save as save_settings,
     save_window_state, Settings, PROJECT_DIRECTORY_ASC,
 };
-use app_state::{new_viewer_state, start_watcher, update, Snapshot, ViewerState};
+use app_state::{
+    clear_expired_points, new_viewer_state, start_watcher, update, Snapshot, ViewerState,
+};
 
 const SKILL_NAME: &str = "ctx-ppteer";
 
@@ -749,6 +751,29 @@ fn set_project_sort_order(project_sort_order: String, app: AppHandle) -> Result<
     Ok(())
 }
 #[tauri::command]
+fn set_auto_clear_after_minutes(
+    auto_clear_after_minutes: Option<u64>,
+    app: AppHandle,
+    state: State<'_, Arc<ViewerState>>,
+) -> Result<(), String> {
+    if auto_clear_after_minutes.is_some_and(|minutes| !(1..=43_200).contains(&minutes)) {
+        return Err("Auto-clear must be between 1 minute and 30 days".into());
+    }
+    let mut settings = load_settings(&app)?;
+    settings.auto_clear_after_minutes = auto_clear_after_minutes;
+    save_settings(&app, &settings)?;
+    let _ = app.emit("settings-update", &settings);
+    if let Some(minutes) = settings.auto_clear_after_minutes {
+        let path = settings::status_path()?;
+        status_file::prune_expired_points(
+            &path,
+            std::time::Duration::from_secs(minutes.saturating_mul(60)),
+        )?;
+        update(&app, &state);
+    }
+    Ok(())
+}
+#[tauri::command]
 fn get_skill_installation(app: AppHandle) -> Result<SkillInstallation, String> {
     integration_status(&app)
 }
@@ -1089,6 +1114,7 @@ pub fn run() {
             open_settings,
             set_appearance_settings,
             set_project_sort_order,
+            set_auto_clear_after_minutes,
             get_skill_installation,
             install_skill,
             install_skill_for_target,
@@ -1119,6 +1145,8 @@ pub fn run() {
                 .lock()
                 .map_err(|_| std::io::Error::other("State unavailable"))?
                 .replace(path);
+            let path = settings::status_path().map_err(std::io::Error::other)?;
+            clear_expired_points(app.handle(), &path);
             update(app.handle(), &state);
             start_watcher(app.handle().clone(), state);
             Ok(())

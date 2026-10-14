@@ -1,6 +1,6 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::{fs, fs::OpenOptions, io::Write, path::Path};
+use std::{fs, fs::OpenOptions, io::Write, path::Path, time::Duration};
 
 pub const MAX_STATUS_BYTES: usize = 1024 * 1024;
 
@@ -258,6 +258,48 @@ pub fn dismiss_point(
     Ok(true)
 }
 
+/// Removes points submitted before the configured age and drops empty session records.
+pub fn prune_expired_points(path: &Path, age: Duration) -> Result<bool, String> {
+    let parent = path.parent().ok_or("Status directory unavailable")?;
+    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let lock = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(path.with_extension("lock"))
+        .map_err(|error| error.to_string())?;
+    lock.lock()
+        .map_err(|error| format!("Unable to lock status JSON: {error}"))?;
+    let mut document = read_document(path)?;
+    let point_count = document
+        .entries
+        .iter()
+        .map(|entry| entry.points.len())
+        .sum::<usize>();
+    let cutoff =
+        chrono::Utc::now() - chrono::Duration::from_std(age).map_err(|error| error.to_string())?;
+    for entry in &mut document.entries {
+        entry.points.retain(|point| {
+            point.submitted_at.as_ref().is_none_or(|submitted_at| {
+                chrono::DateTime::parse_from_rfc3339(submitted_at)
+                    .is_ok_and(|submitted_at| submitted_at.with_timezone(&chrono::Utc) >= cutoff)
+            })
+        });
+    }
+    document.entries.retain(|entry| !entry.points.is_empty());
+    let changed = document
+        .entries
+        .iter()
+        .map(|entry| entry.points.len())
+        .sum::<usize>()
+        != point_count;
+    if changed {
+        save_document(path, parent, &document)?;
+    }
+    Ok(changed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -444,6 +486,42 @@ mod tests {
         )
         .unwrap());
         assert!(read_document(&path).unwrap().entries.is_empty());
+    }
+
+    #[test]
+    fn prunes_expired_points_and_keeps_recent_points() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("status.json");
+        let now = chrono::Utc::now();
+        let document = Document {
+            version: 1,
+            entries: vec![Entry {
+                folder_name: "project".into(),
+                session_id: Some("session".into()),
+                branch: "main".into(),
+                points: vec![
+                    Point {
+                        text: "expired".into(),
+                        done: false,
+                        link: None,
+                        submitted_at: Some((now - chrono::Duration::minutes(2)).to_rfc3339()),
+                    },
+                    Point {
+                        text: "current".into(),
+                        done: false,
+                        link: None,
+                        submitted_at: Some(now.to_rfc3339()),
+                    },
+                ],
+                updated_at: now.to_rfc3339(),
+            }],
+        };
+        fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
+
+        assert!(prune_expired_points(&path, Duration::from_secs(60)).unwrap());
+        let document = read_document(&path).unwrap();
+        assert_eq!(document.entries[0].points[0].text, "current");
+        assert!(!prune_expired_points(&path, Duration::from_secs(60)).unwrap());
     }
 
     #[test]
