@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { flip } from "svelte/animate";
-  import { fly, slide } from "svelte/transition";
+  import type { FlipParams } from "svelte/animate";
+  import { fade, fly } from "svelte/transition";
   import { onMount } from "svelte";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { command } from "./commands";
@@ -44,6 +44,14 @@
   }
   function pointKey(entry: StatusEntry, point: StatusEntry["points"][number], pointIndex: number) {
     return `${entry.folder_name}:${entry.session_id ?? ""}:${point.submitted_at ?? `${entry.updated_at}:${pointIndex}`}`;
+  }
+  function moveWithoutScaling(_: Element, { from, to }: FlipParams) {
+    const x = from.left - to.left;
+    const y = from.top - to.top;
+    return {
+      duration: 300,
+      css: (t: number) => `transform: translate(${x * (1 - t)}px, ${y * (1 - t)}px)`,
+    };
   }
   function relativeTime(value: string) {
     const minutes = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 60_000));
@@ -162,16 +170,16 @@
   </div>
   <section class="document" aria-label="Project status" onselectstart={() => selectedText = true}>
     {#each projects as folder (folder)}
-      <div class="project-group" animate:flip={{ duration: 300 }} out:slide={{ duration: 260 }}>
+      <div class="project-group" animate:moveWithoutScaling out:fade={{ duration: 180 }}>
         <h2>{folder}</h2>
         {#each [...new Set(entries.filter((entry) => entry.folder_name === folder).map((entry) => entry.branch))] as branch (`${folder}:${branch}`)}
-          <div class="branch-group" animate:flip={{ duration: 300 }} out:slide={{ duration: 260 }}>
+          <div class="branch-group" animate:moveWithoutScaling out:fade={{ duration: 180 }}>
             <p>{branch}</p>
             <ul>
               {#each entries.filter((entry) => entry.folder_name === folder && entry.branch === branch) as entry}
                 {#each entry.points as point, pointIndex (pointKey(entry, point, pointIndex))}
                   {@const pointId = `${entry.folder_name}:${entry.session_id ?? ""}:${entry.updated_at}:${pointIndex}`}
-                  <li class="status-point" class:expiring-soon={expiresSoon(point.submitted_at ?? entry.updated_at)} animate:flip={{ duration: 300 }} out:fly={{ x: 18, duration: dismissalExitDuration }}>
+                  <li class="status-point" class:expiring-soon={expiresSoon(point.submitted_at ?? entry.updated_at)} animate:moveWithoutScaling out:fly={{ x: 18, duration: dismissalExitDuration }}>
                     <span class="point-text">{#if point.done}<strong>DONE</strong>: {" "}{/if}{#if safeLink(point.link)}<a href={safeLink(point.link)} target="_blank" rel="noopener noreferrer">{point.text}</a>{:else}{point.text}{/if}</span>
                     <span class="point-actions">
                       <span class="point-age">{relativeTime(point.submitted_at ?? entry.updated_at)}</span>
