@@ -1,6 +1,6 @@
 <script lang="ts">
   import { flip } from "svelte/animate";
-  import { fly } from "svelte/transition";
+  import { fly, slide } from "svelte/transition";
   import { onMount } from "svelte";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { command } from "./commands";
@@ -161,25 +161,29 @@
       <button onclick={() => void command("open_settings")}>Settings</button>
   </div>
   <section class="document" aria-label="Project status" onselectstart={() => selectedText = true}>
-    {#each projects as folder}
-      <h2>{folder}</h2>
-      {#each [...new Set(entries.filter((entry) => entry.folder_name === folder).map((entry) => entry.branch))] as branch}
-        <p>{branch}</p>
-        <ul>
-          {#each entries.filter((entry) => entry.folder_name === folder && entry.branch === branch) as entry}
-            {#each entry.points as point, pointIndex (pointKey(entry, point, pointIndex))}
-              {@const pointId = `${entry.folder_name}:${entry.session_id ?? ""}:${entry.updated_at}:${pointIndex}`}
-              <li class="status-point" class:expiring-soon={expiresSoon(point.submitted_at ?? entry.updated_at)} animate:flip={{ duration: 300 }} out:fly={{ x: 18, duration: dismissalExitDuration }}>
-                <span class="point-text">{#if point.done}<strong>DONE</strong>: {" "}{/if}{#if safeLink(point.link)}<a href={safeLink(point.link)} target="_blank" rel="noopener noreferrer">{point.text}</a>{:else}{point.text}{/if}</span>
-                <span class="point-actions">
-                  <span class="point-age">{relativeTime(point.submitted_at ?? entry.updated_at)}</span>
-                  <button class="dismiss-point" onclick={() => void dismissPoint(entry, pointIndex)} disabled={dismissing === pointId} aria-label={`Dismiss ${point.text}`} title="Dismiss point">×</button>
-                </span>
-              </li>
-            {/each}
-          {/each}
-        </ul>
-      {/each}
+    {#each projects as folder (folder)}
+      <div class="project-group" animate:flip={{ duration: 300 }} out:slide={{ duration: 260 }}>
+        <h2>{folder}</h2>
+        {#each [...new Set(entries.filter((entry) => entry.folder_name === folder).map((entry) => entry.branch))] as branch (`${folder}:${branch}`)}
+          <div class="branch-group" animate:flip={{ duration: 300 }} out:slide={{ duration: 260 }}>
+            <p>{branch}</p>
+            <ul>
+              {#each entries.filter((entry) => entry.folder_name === folder && entry.branch === branch) as entry}
+                {#each entry.points as point, pointIndex (pointKey(entry, point, pointIndex))}
+                  {@const pointId = `${entry.folder_name}:${entry.session_id ?? ""}:${entry.updated_at}:${pointIndex}`}
+                  <li class="status-point" class:expiring-soon={expiresSoon(point.submitted_at ?? entry.updated_at)} animate:flip={{ duration: 300 }} out:fly={{ x: 18, duration: dismissalExitDuration }}>
+                    <span class="point-text">{#if point.done}<strong>DONE</strong>: {" "}{/if}{#if safeLink(point.link)}<a href={safeLink(point.link)} target="_blank" rel="noopener noreferrer">{point.text}</a>{:else}{point.text}{/if}</span>
+                    <span class="point-actions">
+                      <span class="point-age">{relativeTime(point.submitted_at ?? entry.updated_at)}</span>
+                      <button class="dismiss-point" onclick={() => void dismissPoint(entry, pointIndex)} disabled={dismissing === pointId} aria-label={`Dismiss ${point.text}`} title="Dismiss point">×</button>
+                    </span>
+                  </li>
+                {/each}
+              {/each}
+            </ul>
+          </div>
+        {/each}
+      </div>
     {/each}
     {#if statusError}<p class="status-error" role="alert">{statusError}</p>{/if}
   </section>
