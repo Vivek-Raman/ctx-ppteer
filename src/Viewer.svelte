@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { flip } from "svelte/animate";
+  import { fly } from "svelte/transition";
   import { onMount } from "svelte";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { command } from "./commands";
@@ -14,8 +16,11 @@
   $: projects = [...new Set(entries.map((entry) => entry.folder_name))].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
   let settings: Settings | null = null;
   let windowFocused = true;
+  let now = Date.now();
+  let expiryCheck: number | undefined;
   const themes = ["system", "light", "dark"] as const;
   const textScales = [0.85, 1, 1.15, 1.35];
+  const fadeLeadTime = 10 * 60_000;
 
   function applySnapshot(value: Snapshot) {
     if (value.revision <= revision) return;
@@ -24,6 +29,7 @@
     pending = null;
     entries = value.document.entries;
     statusError = value.error ?? "";
+    scheduleExpiryCheck();
   }
   function updateSelection() {
     selectedText = Boolean(document.getSelection()?.toString());
@@ -33,6 +39,9 @@
     if (!link) return null;
     try { const url = new URL(link); return ["https:", "http:"].includes(url.protocol) ? url.href : null; }
     catch { return null; }
+  }
+  function pointKey(entry: StatusEntry, point: StatusEntry["points"][number], pointIndex: number) {
+    return `${entry.folder_name}:${entry.session_id ?? ""}:${point.submitted_at ?? `${entry.updated_at}:${pointIndex}`}`;
   }
   function relativeTime(value: string) {
     const minutes = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 60_000));
@@ -44,6 +53,24 @@
     const days = Math.floor(hours / 24);
     const remainingHours = hours % 24;
     return `${days}d${remainingHours ? ` ${remainingHours}h` : ""}`;
+  }
+  function expiresSoon(value: string) {
+    const autoClearAfterMinutes = settings?.autoClearAfterMinutes;
+    if (autoClearAfterMinutes === null || autoClearAfterMinutes === undefined) return false;
+    const remainingMilliseconds = new Date(value).getTime() + autoClearAfterMinutes * 60_000 - now;
+    return remainingMilliseconds <= fadeLeadTime;
+  }
+  function scheduleExpiryCheck() {
+    if (expiryCheck !== undefined) window.clearTimeout(expiryCheck);
+    const autoClearAfterMinutes = settings?.autoClearAfterMinutes;
+    if (autoClearAfterMinutes === null || autoClearAfterMinutes === undefined) return;
+    const expiryDuration = autoClearAfterMinutes * 60_000;
+    const nextFadeAt = entries.flatMap((entry) => entry.points.map((point) => new Date(point.submitted_at ?? entry.updated_at).getTime() + expiryDuration - fadeLeadTime)).filter((fadeAt) => fadeAt > now).reduce((soonest, fadeAt) => Math.min(soonest, fadeAt), Infinity);
+    if (nextFadeAt === Infinity) return;
+    expiryCheck = window.setTimeout(() => {
+      now = Date.now();
+      scheduleExpiryCheck();
+    }, nextFadeAt - now);
   }
   async function dismissPoint(entry: StatusEntry, pointIndex: number) {
     const id = `${entry.folder_name}:${entry.session_id ?? ""}:${entry.updated_at}:${pointIndex}`;
@@ -84,7 +111,7 @@
     let unlistenSource: UnlistenFn | undefined;
     let unlistenSettings: UnlistenFn | undefined;
     void listen<Snapshot>("source-update", (event) => applySnapshot(event.payload)).then((stop) => { unlistenSource = stop; });
-    void listen<Settings>("settings-update", (event) => { settings = event.payload; applyTheme(settings.theme); applyPrimaryColor(settings.primaryColor); document.documentElement.style.setProperty("--text-scale", String(settings.textScale)); }).then((stop) => { unlistenSettings = stop; });
+    void listen<Settings>("settings-update", (event) => { settings = event.payload; applyTheme(settings.theme); applyPrimaryColor(settings.primaryColor); document.documentElement.style.setProperty("--text-scale", String(settings.textScale)); scheduleExpiryCheck(); }).then((stop) => { unlistenSettings = stop; });
     void (async () => {
       settings = await command<Settings>("get_settings");
       applyTheme(settings.theme);
@@ -92,7 +119,7 @@
       document.documentElement.style.setProperty("--text-scale", String(settings.textScale));
       applySnapshot(await command<Snapshot>("get_snapshot"));
     })().catch(console.error);
-    return () => { window.removeEventListener("focus", onFocus); window.removeEventListener("blur", onBlur); systemTheme.removeEventListener("change", onThemeChange); document.removeEventListener("selectionchange", updateSelection); unlistenSource?.(); unlistenSettings?.(); };
+    return () => { if (expiryCheck !== undefined) window.clearTimeout(expiryCheck); window.removeEventListener("focus", onFocus); window.removeEventListener("blur", onBlur); systemTheme.removeEventListener("change", onThemeChange); document.removeEventListener("selectionchange", updateSelection); unlistenSource?.(); unlistenSettings?.(); };
   });
 </script>
 
@@ -127,9 +154,9 @@
         <p>{branch}</p>
         <ul>
           {#each entries.filter((entry) => entry.folder_name === folder && entry.branch === branch) as entry}
-            {#each entry.points as point, pointIndex}
+            {#each entry.points as point, pointIndex (pointKey(entry, point, pointIndex))}
               {@const pointId = `${entry.folder_name}:${entry.session_id ?? ""}:${entry.updated_at}:${pointIndex}`}
-              <li class="status-point">
+              <li class="status-point" class:expiring-soon={expiresSoon(point.submitted_at ?? entry.updated_at)} animate:flip={{ duration: 220 }} out:fly={{ x: 14, duration: 160 }}>
                 <span class="point-text">{#if point.done}<strong>DONE</strong>: {" "}{/if}{#if safeLink(point.link)}<a href={safeLink(point.link)} target="_blank" rel="noopener noreferrer">{point.text}</a>{:else}{point.text}{/if}</span>
                 <span class="point-actions">
                   <span class="point-age">{relativeTime(point.submitted_at ?? entry.updated_at)}</span>
@@ -155,7 +182,8 @@
   .icon-button { min-width: 1.8rem; padding-inline: 0.35rem !important; }
   .document-actions.window-unfocused { pointer-events: none; opacity: 0; }
   .status-error { color: #c43d35; font-size: 0.8rem; }
-  .status-point { position: relative; }
+  .status-point { position: relative; transition: opacity 160ms ease; }
+  .status-point.expiring-soon { opacity: 0.42; }
   .point-actions { position: absolute; top: 50%; right: 0; display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.14rem 0.28rem 0.14rem 0.5rem; border-radius: 999px; transform: translateY(-50%); opacity: 0; pointer-events: none; color: var(--muted); background: color-mix(in srgb, var(--bg) 72%, transparent); backdrop-filter: blur(10px) saturate(1.15); -webkit-backdrop-filter: blur(10px) saturate(1.15); box-shadow: 0 2px 8px color-mix(in srgb, var(--text) 8%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--bg) 28%, transparent); font-size: 0.78em; white-space: nowrap; transition: opacity 120ms ease; }
   .status-point:hover .point-actions, .status-point:focus-within .point-actions { opacity: 1; pointer-events: auto; }
   .dismiss-point { padding: 0 0.28rem; border: 0; border-radius: 0.3rem; color: inherit; background: transparent; font-size: 1.25em; line-height: 1; }
