@@ -13,6 +13,7 @@
   let entries: StatusEntry[] = [];
   let statusError = "";
   let dismissing = "";
+  let pendingRemoval = "";
   $: projects = [...new Set(entries.map((entry) => entry.folder_name))].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
   let settings: Settings | null = null;
   let windowFocused = true;
@@ -21,10 +22,11 @@
   const themes = ["system", "light", "dark"] as const;
   const textScales = [0.85, 1, 1.15, 1.35];
   const fadeLeadTime = 10 * 60_000;
+  const dismissalExitDuration = 320;
 
   function applySnapshot(value: Snapshot) {
     if (value.revision <= revision) return;
-    if (selectedText) { pending = value; return; }
+    if (selectedText || pendingRemoval) { pending = value; return; }
     revision = value.revision;
     pending = null;
     entries = value.document.entries;
@@ -74,10 +76,21 @@
   }
   async function dismissPoint(entry: StatusEntry, pointIndex: number) {
     const id = `${entry.folder_name}:${entry.session_id ?? ""}:${entry.updated_at}:${pointIndex}`;
+    const removalKey = pointKey(entry, entry.points[pointIndex], pointIndex);
+    const entriesBeforeDismissal = entries;
     dismissing = id;
+    pendingRemoval = removalKey;
+    entries = entries.map((candidate) => candidate === entry
+      ? { ...candidate, points: candidate.points.filter((_, index) => index !== pointIndex) }
+      : candidate);
     try {
       await command("dismiss_point", { folderName: entry.folder_name, sessionId: entry.session_id, branch: entry.branch, updatedAt: entry.updated_at, pointIndex });
+      await new Promise<void>((resolve) => window.setTimeout(resolve, dismissalExitDuration + 30));
+      pendingRemoval = "";
+      applySnapshot(pending ?? await command<Snapshot>("get_snapshot"));
     } catch (error) {
+      pendingRemoval = "";
+      entries = entriesBeforeDismissal;
       statusError = error instanceof Error ? error.message : String(error);
     } finally {
       dismissing = "";
@@ -156,7 +169,7 @@
           {#each entries.filter((entry) => entry.folder_name === folder && entry.branch === branch) as entry}
             {#each entry.points as point, pointIndex (pointKey(entry, point, pointIndex))}
               {@const pointId = `${entry.folder_name}:${entry.session_id ?? ""}:${entry.updated_at}:${pointIndex}`}
-              <li class="status-point" class:expiring-soon={expiresSoon(point.submitted_at ?? entry.updated_at)} animate:flip={{ duration: 220 }} out:fly={{ x: 14, duration: 160 }}>
+              <li class="status-point" class:expiring-soon={expiresSoon(point.submitted_at ?? entry.updated_at)} animate:flip={{ duration: 300 }} out:fly={{ x: 18, duration: dismissalExitDuration }}>
                 <span class="point-text">{#if point.done}<strong>DONE</strong>: {" "}{/if}{#if safeLink(point.link)}<a href={safeLink(point.link)} target="_blank" rel="noopener noreferrer">{point.text}</a>{:else}{point.text}{/if}</span>
                 <span class="point-actions">
                   <span class="point-age">{relativeTime(point.submitted_at ?? entry.updated_at)}</span>
