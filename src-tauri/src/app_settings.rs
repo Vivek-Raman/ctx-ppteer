@@ -3,6 +3,8 @@ use std::{fs, path::PathBuf};
 use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
 
 pub const PROJECT_DIRECTORY_ASC: &str = "project-directory-asc";
+pub const UPDATED_AT_DESC: &str = "updated-at-desc";
+pub const UPDATED_AT_ASC: &str = "updated-at-asc";
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct WindowState {
@@ -49,7 +51,7 @@ fn default_pinned() -> bool {
     false
 }
 fn default_project_sort_order() -> String {
-    PROJECT_DIRECTORY_ASC.into()
+    UPDATED_AT_DESC.into()
 }
 
 fn settings_path(_app: &AppHandle) -> Result<PathBuf, String> {
@@ -217,11 +219,11 @@ mod tests {
     }
 
     #[test]
-    fn defaults_project_sort_order_for_existing_settings() {
+    fn defaults_project_sort_order_to_newest_first() {
         let settings: Settings =
             serde_json::from_str(r#"{"sourcePath":"/tmp/status.md"}"#).unwrap();
 
-        assert_eq!(settings.project_sort_order, PROJECT_DIRECTORY_ASC);
+        assert_eq!(settings.project_sort_order, UPDATED_AT_DESC);
         assert_eq!(settings.primary_color, "#c98c5a");
         assert!(!settings.pinned);
         assert_eq!(settings.auto_clear_after_minutes, None);

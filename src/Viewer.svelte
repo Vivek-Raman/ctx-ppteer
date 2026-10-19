@@ -14,8 +14,14 @@
   let statusError = "";
   let dismissing = "";
   let pendingRemoval = "";
-  $: projects = [...new Set(entries.map((entry) => entry.folder_name))].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
   let settings: Settings | null = null;
+  $: projects = [...new Set(entries.map((entry) => entry.folder_name))].sort((left, right) => {
+    if (settings?.projectSortOrder === "project-directory-asc") return left.toLowerCase().localeCompare(right.toLowerCase());
+    const lastUpdatedAt = (folder: string) => Math.max(...entries.filter((entry) => entry.folder_name === folder).map((entry) => new Date(entry.updated_at).getTime()));
+    const difference = lastUpdatedAt(left) - lastUpdatedAt(right);
+    if (difference) return settings?.projectSortOrder === "updated-at-asc" ? difference : -difference;
+    return left.toLowerCase().localeCompare(right.toLowerCase());
+  });
   let windowFocused = true;
   let now = Date.now();
   let expiryCheck: number | undefined;

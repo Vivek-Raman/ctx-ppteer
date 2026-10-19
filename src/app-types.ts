@@ -1,5 +1,5 @@
 export type Theme = "system" | "light" | "dark";
-export type ProjectSortOrder = "project-directory-asc";
+export type ProjectSortOrder = "project-directory-asc" | "updated-at-desc" | "updated-at-asc";
 
 export type StatusPoint = { text: string; done: boolean; link: string | null; submitted_at?: string | null };
 export type StatusEntry = {

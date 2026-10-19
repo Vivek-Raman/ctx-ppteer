@@ -23,7 +23,7 @@ pub mod status_file;
 
 use app_settings::{
     default_settings, load as load_settings, restore_window_state, save as save_settings,
-    save_window_state, Settings, PROJECT_DIRECTORY_ASC,
+    save_window_state, Settings, PROJECT_DIRECTORY_ASC, UPDATED_AT_ASC, UPDATED_AT_DESC,
 };
 use app_state::{
     clear_expired_points, new_viewer_state, start_watcher, update, Snapshot, ViewerState,
@@ -741,8 +741,14 @@ fn is_hex_color(value: &str) -> bool {
 }
 #[tauri::command]
 fn set_project_sort_order(project_sort_order: String, app: AppHandle) -> Result<(), String> {
-    if project_sort_order != PROJECT_DIRECTORY_ASC {
-        return Err("Project sort order must be project-directory-asc".into());
+    if !matches!(
+        project_sort_order.as_str(),
+        PROJECT_DIRECTORY_ASC | UPDATED_AT_DESC | UPDATED_AT_ASC
+    ) {
+        return Err(
+            "Project sort order must be project-directory-asc, updated-at-desc, or updated-at-asc"
+                .into(),
+        );
     }
     let mut settings = load_settings(&app)?;
     settings.project_sort_order = project_sort_order;
