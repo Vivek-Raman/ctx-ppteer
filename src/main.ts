@@ -1,7 +1,7 @@
-import { mount } from "svelte";
-import App from "./App.svelte";
-import "./styles.css";
+import { mount } from 'svelte';
+import App from './App.svelte';
+import './styles.css';
 
-const target = document.getElementById("app");
-if (!target) throw new Error("The app mount element is missing");
+const target = document.getElementById('app');
+if (!target) throw new Error('The app mount element is missing');
 mount(App, { target });

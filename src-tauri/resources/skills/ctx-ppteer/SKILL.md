@@ -25,3 +25,6 @@ Call `write_status` with the same project/session ID, the current branch, and yo
 Keep this as an editable account of your current work, not a message history.
 
 Keep text brief. Do not send Markdown syntax, commit hashes, or other revision identifiers in point text. Mention blockers only when critical and unresolved.
+
+Status points have stable IDs. Version 1 status files remain readable and migrate to version 2 on a successful write. Restart the app after external settings edits.
+When revising points returned by `read_status`, preserve each returned point `id`; do not invent IDs. New points receive IDs from the server.

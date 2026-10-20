@@ -1,7 +1,13 @@
-export type Theme = "system" | "light" | "dark";
-export type ProjectSortOrder = "project-directory-asc" | "updated-at-desc" | "updated-at-asc";
+export type Theme = 'system' | 'light' | 'dark';
+export type ProjectSortOrder = 'project-directory-asc' | 'updated-at-desc' | 'updated-at-asc';
 
-export type StatusPoint = { text: string; done: boolean; link: string | null; submitted_at?: string | null };
+export type StatusPoint = {
+  text: string;
+  done: boolean;
+  link: string | null;
+  submitted_at?: string | null;
+  id?: string | null;
+};
 export type StatusEntry = {
   folder_name: string;
   session_id: string | null;
@@ -10,9 +16,12 @@ export type StatusEntry = {
   updated_at: string;
 };
 export type Snapshot = {
-  document: { version: number; entries: StatusEntry[] };
+  path: string | null;
+  document: { version: 1 | 2; entries: StatusEntry[] };
   revision: number;
+  health: 'waiting' | 'current' | 'stale' | 'error';
   error: string | null;
+  modified_at: string | null;
 };
 
 export type AgentInstallation = {
@@ -22,7 +31,7 @@ export type AgentInstallation = {
   mcpRegistered: boolean;
   available: boolean;
   configPath: string;
-  error?: string;
+  error: string | null;
 };
 
 export type SkillTarget = {

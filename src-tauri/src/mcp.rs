@@ -1,4 +1,8 @@
-use crate::{settings, status_file};
+use crate::{
+    paths,
+    status::domain::Point,
+    status::store::{StatusError, StatusStore},
+};
 use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler, ServiceExt,
@@ -16,7 +20,7 @@ struct WriteStatusInput {
     /// Currently checked out branch.
     branch: String,
     /// Complete revised point list; omitted points are removed.
-    points: Vec<status_file::Point>,
+    points: Vec<Point>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -30,6 +34,16 @@ struct ReadStatusInput {
 
 struct StatusServer {
     tool_router: ToolRouter<Self>,
+}
+
+fn map_status_error(error: StatusError) -> McpError {
+    match error {
+        StatusError::InvalidInput(message) => McpError::invalid_params(message, None),
+        StatusError::Conflict(message) => McpError::invalid_params(message, None),
+        StatusError::InvalidDocument(message) | StatusError::Io(message) => {
+            McpError::internal_error(message, None)
+        }
+    }
 }
 
 impl StatusServer {
@@ -49,11 +63,11 @@ impl StatusServer {
         &self,
         Parameters(input): Parameters<ReadStatusInput>,
     ) -> Result<String, McpError> {
-        let path =
-            settings::status_path().map_err(|error| McpError::internal_error(error, None))?;
-        let entries =
-            status_file::read_project_status(&path, &input.folder_name, &input.session_id)
-                .map_err(|error| McpError::invalid_params(error, None))?;
+        let path = paths::status_path()
+            .map_err(|error| McpError::internal_error(error.to_string(), None))?;
+        let entries = StatusStore::new(path)
+            .read_project(&input.folder_name, &input.session_id)
+            .map_err(map_status_error)?;
         serde_json::to_string(&entries)
             .map_err(|error| McpError::internal_error(error.to_string(), None))
     }
@@ -65,16 +79,15 @@ impl StatusServer {
         &self,
         Parameters(input): Parameters<WriteStatusInput>,
     ) -> Result<String, McpError> {
-        let path =
-            settings::status_path().map_err(|error| McpError::internal_error(error, None))?;
-        let bytes = status_file::write_project_status(
-            &path,
-            input.folder_name.clone(),
-            input.session_id,
-            input.branch,
-            input.points,
-        )
-        .map_err(|error| McpError::internal_error(error, None))?;
+        let path = paths::status_path().map_err(|error| McpError::internal_error(error, None))?;
+        let bytes = StatusStore::new(path)
+            .upsert(
+                input.folder_name.clone(),
+                input.session_id,
+                input.branch,
+                input.points,
+            )
+            .map_err(|error| map_status_error(error))?;
         Ok(format!(
             "Updated {} status ({bytes} bytes).",
             input.folder_name

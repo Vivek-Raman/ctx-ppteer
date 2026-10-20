@@ -3,13 +3,11 @@
   "title": "ctx-ppteer status document",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "version",
-    "entries"
-  ],
+  "required": ["version", "entries"],
   "properties": {
     "version": {
-      "const": 1
+      "enum": [1, 2],
+      "description": "Version 1 is read for compatibility. Successful writes use version 2."
     },
     "entries": {
       "type": "array",
@@ -18,17 +16,29 @@
       }
     }
   },
+  "allOf": [
+    {
+      "if": { "properties": { "version": { "const": 2 } } },
+      "then": {
+        "properties": {
+          "entries": {
+            "items": {
+              "properties": {
+                "points": {
+                  "items": { "required": ["id"] }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
     "entry": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "folder_name",
-        "session_id",
-        "branch",
-        "points",
-        "updated_at"
-      ],
+      "required": ["folder_name", "session_id", "branch", "points", "updated_at"],
       "properties": {
         "folder_name": {
           "$ref": "#/$defs/line"
@@ -68,9 +78,7 @@
     "point": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "text"
-      ],
+      "required": ["text"],
       "properties": {
         "text": {
           "type": "string",
@@ -95,7 +103,12 @@
         "submitted_at": {
           "type": "string",
           "format": "date-time",
-          "description": "Server-generated timestamp retained while the point is unchanged."
+          "description": "RFC 3339 timestamp. Existing point IDs retain their timestamp when omitted on edit; a valid caller-supplied timestamp is preserved."
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Stable server-assigned point identity."
         }
       }
     }
