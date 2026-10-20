@@ -5,10 +5,29 @@ import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
 import Viewer from '../src/viewer/Viewer.svelte';
 import '../src/styles.css';
 
+// Observe the browser's actual animation lifetimes, including cancellation.
+const animationRuns = [];
+const animate = Element.prototype.animate;
+Element.prototype.animate = function (...args) {
+  const animation = animate.apply(this, args);
+  const run = { animation, start: performance.now(), end: Infinity };
+  animationRuns.push(run);
+  animation.finished.then(
+    () => {
+      run.end = performance.now();
+    },
+    () => {
+      run.end = performance.now();
+    },
+  );
+  return animation;
+};
+
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const listeners = new Map();
 let revision = 0;
 let entries = [];
+let failDismiss = false;
 let settings = {
   theme: 'light',
   primaryColor: '#c98c5a',
@@ -35,10 +54,16 @@ mockIPC((cmd, args) => {
   if (cmd === 'get_settings') return settings;
   if (cmd === 'get_snapshot') return snapshot();
   if (cmd === 'dismiss_point') {
+    if (failDismiss) {
+      failDismiss = false;
+      throw new Error('Dismissal unavailable');
+    }
     entries = entries.flatMap((entry) => {
       if (entry.folder_name !== args.folderName || entry.session_id !== args.sessionId)
         return [entry];
-      const points = entry.points.filter((_, index) => index !== args.pointIndex);
+      const points = entry.points.filter((point, index) =>
+        args.pointId ? point.id !== args.pointId : index !== args.pointIndex,
+      );
       return points.length ? [{ ...entry, points }] : [];
     });
     emit('source-update', snapshot());
@@ -46,6 +71,7 @@ mockIPC((cmd, args) => {
 });
 mount(Viewer, { target: document.querySelector('#app') });
 const point = (text) => ({
+  id: `point-${point.next}`,
   text,
   done: false,
   link: null,
@@ -197,6 +223,69 @@ window.motionResults = (async () => {
   await pause(650);
   assert(!dismissed.isConnected, 'dismissed row still present');
   results.push({ name: 'dismissal waits for exit before reflow' });
+  await push([...entries, entry('Batch')]);
+  await pause(650);
+  const firstExit = find('Batch point 0');
+  const lastExit = find('Batch point 1');
+  const survivor = find('Same time A');
+  const survivorY = survivor.getBoundingClientRect().top;
+  firstExit.closest('li').querySelector('button').click();
+  await pause(180);
+  assert(
+    !lastExit.closest('li').querySelector('button').disabled,
+    'another dismissal disabled this row',
+  );
+  lastExit.closest('li').querySelector('button').click();
+  settings = { ...settings, textScale: 1.15, projectSortOrder: 'project-directory-asc' };
+  emit('settings-update', settings);
+  await push([...entries, entry('Incoming')]);
+  await pause(180);
+  assert(
+    firstExit.isConnected && lastExit.isConnected,
+    'batch reflow started before the last exit',
+  );
+  assert(
+    Math.abs(survivor.getBoundingClientRect().top - survivorY) < 1,
+    'settings or snapshot moved text during dismissal',
+  );
+  assert(
+    lastExit.closest('li').classList.contains('removing'),
+    'second dismissal did not join the group',
+  );
+  await pause(850);
+  assert(!firstExit.isConnected && !lastExit.isConnected, 'batch did not finish both dismissals');
+  assert(find('Incoming point 0'), 'queued snapshot was lost');
+  results.push({
+    name: 'parallel dismissal group holds settings and snapshots until all exits finish',
+  });
+  const failed = find('Incoming point 0');
+  failDismiss = true;
+  failed.closest('li').querySelector('button').click();
+  await pause(380);
+  assert(failed.isConnected, 'failed dismissal removed the row');
+  assert(
+    !failed.closest('li').classList.contains('removing'),
+    'failed dismissal left the row disabled',
+  );
+  assert(
+    getComputedStyle(failed.closest('li')).opacity === '1',
+    'failed dismissal left an exit animation running',
+  );
+  results.push({ name: 'immediate dismissal failure cancels the exit and restores the row' });
+  const returningEntry = entry('Returning');
+  await push([...entries, returningEntry]);
+  await pause(650);
+  const returning = find('Returning point 0');
+  await push(entries.filter((item) => item.folder_name !== 'Returning'));
+  await pause(60);
+  await push([...entries, returningEntry]);
+  await pause(650);
+  assert(returning === find('Returning point 0'), 'update during exit recreated a returning row');
+  assert(
+    getComputedStyle(returning.closest('.motion-row')).opacity === '1',
+    'returning row stayed faded',
+  );
+  results.push({ name: 'update during exit preserves and restores returning rows' });
   await pause(250);
   const matchMedia = window.matchMedia.bind(window);
   window.matchMedia = (query) =>
@@ -209,6 +298,33 @@ window.motionResults = (async () => {
     'reduced motion delayed entry',
   );
   results.push({ name: 'reduced motion skips delays and animation' });
+  const contentRuns = animationRuns.filter(({ animation }) => animation.id.startsWith('row-'));
+  for (const run of contentRuns) {
+    assert(Number.isFinite(run.end), `${run.animation.id} never completed`);
+    if (!['row-move', 'row-enter'].includes(run.animation.id)) continue;
+    for (const other of contentRuns) {
+      if (other === run || other.animation.id === run.animation.id) continue;
+      assert(
+        Math.min(run.end, other.end) <= Math.max(run.start, other.start),
+        `${run.animation.id} overlapped ${other.animation.id}`,
+      );
+    }
+  }
+  assert(
+    contentRuns.some(({ animation }) => animation.id === 'row-exit'),
+    'missing queued fades',
+  );
+  assert(
+    contentRuns.some(({ animation }) => animation.id === 'row-move'),
+    'missing queued reorders',
+  );
+  assert(
+    contentRuns.some(({ animation }) => animation.id === 'row-enter'),
+    'missing queued fly-ins',
+  );
+  results.push({
+    name: 'actual exit, move, and entrance animation lifetimes never overlap across phases',
+  });
   return { passed: results.length, results };
 })().catch((error) => ({ error: error.stack, results }));
 

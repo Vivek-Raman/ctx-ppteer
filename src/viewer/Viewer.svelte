@@ -1,18 +1,18 @@
 <script lang="ts">
-  import type { FlipParams } from 'svelte/animate';
-  import { fade, fly } from 'svelte/transition';
-  import { cubicOut } from 'svelte/easing';
   import { pointKey, projectNames, relativeTime, viewerRows } from './rows';
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { command } from '../shared/commands';
   import { applyPrimaryColor, applyTheme, systemTheme } from '../shared/theme';
   import { ViewerController, browserTimers } from './controller';
+  import { RowMotion } from './row-motion';
   import { startEventReadLifecycle } from '../shared/event-lifecycle';
   import { listenTauri } from '../shared/tauri-events';
   import { subscribeSettings } from '../settings/subscription';
   import type { Snapshot } from '../shared/types';
 
-  const controller = new ViewerController(browserTimers());
+  const timers = browserTimers();
+  const motion = new RowMotion(tick, (ms) => (timers.reducedMotion() ? 0 : ms));
+  const controller = new ViewerController(timers, motion);
   const textScales = [0.85, 1, 1.15, 1.35];
   const themes = ['system', 'light', 'dark'] as const;
   let windowFocused = true;
@@ -34,9 +34,6 @@
       return null;
     }
   }
-  function motionDuration(duration: number) {
-    return controller.motionDuration(duration);
-  }
   function expirySoon(
     submittedAt: string,
     autoClearAfterMinutes: number | null,
@@ -46,19 +43,6 @@
       autoClearAfterMinutes != null &&
       new Date(submittedAt).getTime() + autoClearAfterMinutes * 60_000 - currentNow <= 10 * 60_000
     );
-  }
-  function moveWithoutScaling(
-    _: Element,
-    { from, to }: { from: DOMRect; to: DOMRect },
-    _params?: FlipParams,
-  ) {
-    const x = from.left - to.left;
-    const y = from.top - to.top;
-    return {
-      duration: motionDuration(300),
-      easing: cubicOut,
-      css: (t: number) => `transform: translate(${x * (1 - t)}px, ${y * (1 - t)}px)`,
-    };
   }
   async function dismissPoint(entry: (typeof entries)[number], pointIndex: number) {
     const point = entry.points[pointIndex];
@@ -299,19 +283,8 @@
     onselectstart={() => controller.setSelection(true)}
   >
     {#each rows as row (row.key)}
-      <div
-        class="motion-row"
-        animate:moveWithoutScaling
-        out:fade={{ duration: motionDuration(180), easing: cubicOut }}
-      >
-        <div
-          in:fly={{
-            y: 18,
-            delay: motionDuration(300),
-            duration: motionDuration(220),
-            easing: cubicOut,
-          }}
-        >
+      <div class="motion-row" data-row-key={row.key} use:motion.row={row.key}>
+        <div>
           {#if row.kind === 'project'}
             <h2>{row.folder}</h2>
           {:else if row.kind === 'branch'}
@@ -321,7 +294,7 @@
             <ul class:branch-end={row.last}>
               <li
                 class="status-point"
-                class:removing={pendingRemoval === row.key}
+                class:removing={pendingRemoval.has(row.key)}
                 class:expiring-soon={expirySoon(
                   point.submitted_at ?? entry.updated_at,
                   settings?.autoClearAfterMinutes ?? null,
@@ -342,7 +315,7 @@
                   <button
                     class="dismiss-point"
                     onclick={() => void dismissPoint(entry, pointIndex)}
-                    disabled={Boolean(dismissing)}
+                    disabled={dismissing.has(row.key) || pendingRemoval.has(row.key)}
                     aria-label={`Dismiss ${point.text}`}
                     title="Dismiss point">×</button
                   >
@@ -360,7 +333,6 @@
 <style>
   :global(:root) {
     --ease-gentle-out: cubic-bezier(0.22, 1, 0.36, 1);
-    --ease-gentle-in: cubic-bezier(0.4, 0, 1, 1);
   }
   .document {
     overflow-anchor: none;
@@ -455,13 +427,6 @@
   }
   .status-point.removing {
     pointer-events: none;
-    animation: dismiss-point 320ms var(--ease-gentle-in) forwards;
-  }
-  @keyframes dismiss-point {
-    to {
-      opacity: 0;
-      transform: translateX(18px);
-    }
   }
   .status-point.expiring-soon {
     opacity: 0.42;
@@ -525,9 +490,6 @@
     .line-art animate,
     .bottom-line-art animate {
       display: none;
-    }
-    .status-point.removing {
-      animation-duration: 0ms;
     }
   }
 </style>
