@@ -61,28 +61,11 @@ pub(crate) fn reset_settings(
     owner: State<'_, Arc<SettingsOwner>>,
     state: State<'_, Arc<ViewerState>>,
 ) -> Result<Settings, String> {
-    let previous = owner.snapshot();
     let settings = owner.reset()?;
-    let effect: Result<(), String> = app
-        .get_webview_window("main")
-        .ok_or_else(|| "Main window unavailable".to_string())
-        .and_then(|window| {
-            window
-                .set_always_on_top(settings.pinned)
-                .map_err(|error| error.to_string())
-        });
-    if let Err(error) = effect {
-        match owner.restore_if_current(&settings, &previous) {
-            Ok(true) => {}
-            Ok(false) => {
-                return Err(format!(
-                    "{error}; settings changed concurrently, reset was not rolled back"
-                ))
-            }
-            Err(recovery) => return Err(format!("{error}; failed to roll back reset: {recovery}")),
-        }
-        return Err(error);
-    }
+    app.get_webview_window("main")
+        .ok_or_else(|| "Main window unavailable".to_string())?
+        .set_always_on_top(settings.pinned)
+        .map_err(|error| error.to_string())?;
     update(&app, &state);
     Ok(settings)
 }
@@ -132,6 +115,19 @@ pub(crate) fn set_auto_clear_after_minutes(
         update(&app, &state);
     }
     Ok(())
+}
+
+#[tauri::command]
+pub(crate) fn set_pinned(
+    pinned: bool,
+    app: AppHandle,
+    owner: State<'_, Arc<SettingsOwner>>,
+) -> Result<(), String> {
+    owner.set_pinned(pinned)?;
+    app.get_webview_window("main")
+        .ok_or_else(|| "Main window unavailable".to_string())?
+        .set_always_on_top(pinned)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -237,29 +233,4 @@ pub(crate) fn uninstall_mcp_for_harness(
         }
     }
     integration_status(&app)
-}
-
-#[tauri::command]
-pub(crate) fn set_pinned(
-    pinned: bool,
-    app: AppHandle,
-    owner: State<'_, Arc<SettingsOwner>>,
-) -> Result<(), String> {
-    let previous = owner.snapshot().pinned;
-    owner.set_pinned(pinned)?;
-    let effect: Result<(), String> = app
-        .get_webview_window("main")
-        .ok_or_else(|| "Main window unavailable".to_string())
-        .and_then(|window| {
-            window
-                .set_always_on_top(pinned)
-                .map_err(|error| error.to_string())
-        });
-    if let Err(error) = effect {
-        owner
-            .restore_pinned_if_current(pinned, previous)
-            .map_err(|recovery| format!("{error}; failed to restore pin setting: {recovery}"))?;
-        return Err(error);
-    }
-    Ok(())
 }

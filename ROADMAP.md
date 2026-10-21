@@ -1,202 +1,305 @@
-# ctx-ppteer product roadmap
+# ctx-ppteer product audit and roadmap
 
-## Review scope
+Reviewed 2026-10-20 against `main` at `4f822ee`, version `0.2.0`. This replaces the earlier Markdown-viewer audit.
 
-This review covers the README, Svelte frontend, Rust/Tauri backend, MCP server, bundled skill, and simulated frontend flows. No product code was changed. Native installation, cross-platform packaging, and real agent sessions still need end-to-end validation.
+## Recommendation
+
+Keep ctx-ppteer focused on a reliable personal overview of coding-agent work. The refactor improves normal concurrent writes, session isolation, rendering, dismissal, and settings behavior. The highest priorities are now crash recovery, understandable freshness and empty states, and setup that proves an agent can publish.
+
+Do not carry the old Markdown editing and whole-document conflict roadmap forward. Those flows were removed. Retention safety and project/session attribution are the next product decisions.
+
+## Scope and evidence
+
+Reviewed the frontend, Rust domain/store/watcher, desktop commands, preferences, integration adapters, schema, bundled skill, README, and tests. Inspected the actual Svelte viewer and Settings through isolated browser IPC fixtures. Product code and saved statuses were not changed.
+
+Verification completed:
+
+- `npm test` passed: 20 controller, five lifecycle, and six retention tests, plus Svelte checks, TypeScript checks, and production build.
+- `cargo test --manifest-path src-tauri/Cargo.toml` passed all 37 tests.
+- `npm run format:check` passed.
+- The documented browser fixture passed all 15 motion checks, including ordering changes, parallel dismissal, failed dismissal, returning rows, and reduced motion.
+- Additional isolated UI checks confirmed an empty waiting state with no explanation, cached reports remaining visible without a warning after a waiting snapshot, and two sessions merging under one project/branch.
+- A temporary Rust probe linked to the compiled library confirmed that a preexisting sidecar lock blocks a write beyond a bounded 500 ms observation; releasing that synthetic lock lets the write complete. The unbounded wait is established by the loop in the source.
+- A second temporary-store probe confirmed that editing a point while retaining its ID preserves its original submitted time and that pruning can remove that recently edited unfinished point.
+
+Limitations: fixture checks do not verify native window placement, real harness discovery, fresh-session skill invocation, external-link opening, installer behavior, or Windows/Linux operation. No user interviews or usage baseline were supplied. A routine live MCP status write did not return; the cause of that live call was not established and was not used to prove the lock finding.
+
+Evidence labels below mean:
+
+- **Observed:** directly inspected behavior or a reproduced scenario.
+- **Code-derived:** a consequence of implementation, without a full production reproduction.
+- **Hypothesis:** user need, prevalence, or impact still requires validation.
 
 ## Product today
 
-ctx-ppteer is a compact Tauri desktop companion for coding-agent status. It watches one aggregate Markdown file, keeps the document visible in a small always-on-top window, and refreshes it when agents write changes. Agents publish project sections through MCP. Users can choose a source file, read rendered Markdown, edit the file, change appearance, save window placement, install the bundled skill, and register MCP configuration for supported agent harnesses.
+ctx-ppteer is a local desktop status board. Agents publish structured plain-text points through MCP. Each project/session record contains a branch and revised point list; points have stable IDs, completion flags, optional HTTP/HTTPS links, and submission timestamps. The viewer groups points by project and branch, hides session labels, and updates as the JSON changes.
 
-The intended audience appears to be developers supervising coding agents. A primary persona of a developer switching between several projects or agent sessions is a hypothesis, because the repository contains no customer research or usage data.
+The MCP manages its own fixed status path and works before the viewer is opened. Users can dismiss individual points, enable age-based auto-clear, choose project ordering, change theme/color/text size, pin the viewer, reset preferences, and install skills and MCP registration for supported harnesses.
 
-## Core user journeys and current friction
+It no longer loads arbitrary Markdown, offers source-file selection, or provides an editor. The current structure separates frontend viewer/settings/integrations/shared code and Rust status/preferences/desktop/integrations code. That organization makes targeted changes easier, but it is an implementation improvement rather than a separate user benefit.
 
-### Connect an agent
+Sources: [README](README.md), [schema](status.schema.json), [MCP contract](src-tauri/src/mcp.rs), [viewer](src/viewer/Viewer.svelte), [preferences](src-tauri/src/preferences/mod.rs).
 
-The user opens Settings, installs a skill, and registers MCP. Skill installation and MCP registration are separate actions. The UI reports configuration presence, but does not prove that an agent can connect and publish a status. The README also describes menu behavior that does not exactly match the current implementation. Evidence: [Settings.svelte](src/Settings.svelte), [lib.rs](src-tauri/src/lib.rs), [README.md](README.md).
+## What changed since the previous audit
 
-### Check progress
+| Earlier finding | Current assessment | Evidence |
+| --- | --- | --- |
+| Whole-file writes lose updates across independent agents | Addressed for cooperating writers during normal operation through a shared lock and atomic replacement. Crash recovery remains a defect. | [store](src-tauri/src/status/store.rs), concurrency tests |
+| Cancel retains an abandoned Markdown draft | Retired. The editor and whole-document save flow were removed. | [README](README.md), [desktop commands](src-tauri/src/desktop/commands.rs) |
+| Queued update disappears after text selection | Fixed in the controller and covered by a passing selection-release test. | [controller](src/viewer/controller.ts), [controller tests](tests/viewer-controller.test.ts) |
+| Backend errors are invisible | Partly fixed. Error strings render, but health is ignored, missing-file waiting has no error, and errors appear after all rows. | [snapshot](src-tauri/src/status/snapshot.rs), [viewer](src/viewer/Viewer.svelte) |
+| Folder names overwrite unrelated agent records | Improved by project/session keys. Distinct sessions retain separate records, but same-name projects still merge visually. Same folder/session pairs remain one record by contract. | [domain](src-tauri/src/status/domain.rs), [rows](src/viewer/rows.ts) |
+| Only alphabetical sorting is available | Fixed. Newest first, oldest first, and A–Z are implemented. Search, filtering, and user-controlled collapse remain absent. | [retention settings](src/settings/RetentionSettings.svelte), [rows](src/viewer/rows.ts) |
+| Setup proves only configuration presence | Still open. Installation indicators do not perform a connection test or verify publication from a real session. | [integration UI](src/integrations/AgentIntegrations.svelte), [config checks](src-tauri/src/integrations/config.rs) |
+| Notes accumulate without cleanup | Partly addressed by dismissal and optional auto-clear. There is no undo or recoverable archive. | [dismissal](src-tauri/src/desktop/commands.rs), [pruning](src-tauri/src/status/domain.rs) |
+| Documentation describes obsolete source menus | README now reflects the structured product and upgrade requirements. Its claim of an OS-held lock does not match the current existence-file implementation. | [README](README.md), [store lock](src-tauri/src/status/store.rs) |
 
-The user opens or glances at the viewer while an agent writes status updates. The backend tracks `health`, errors, and modification time, but the viewer only renders Markdown and does not expose that source state. A missing or unreadable file can therefore leave old content looking current. The frontend also queues updates while text is selected or edited. In a simulated flow, a queued update remained hidden after selection ended. Evidence: [app_state.rs](src-tauri/src/app_state.rs), [Viewer.svelte](src/Viewer.svelte), [app-types.ts](src/app-types.ts).
+## Users and core journeys
 
-### Correct a note
+The code and skill establish an intended workflow, not a measured customer segment. All personas and usage-frequency assumptions below remain hypotheses.
 
-The user clicks Edit or double-clicks the document, changes Markdown, and saves or cancels. In a simulated flow, Cancel left the abandoned draft in the next edit session. Human saves also carry no base-content or version check, so a newer agent update can be overwritten. Evidence: [Viewer.svelte](src/Viewer.svelte), `save_markdown` in [lib.rs](src-tauri/src/lib.rs).
+### 1. Connect an agent or upgrade an installation
 
-### Monitor multiple projects
+**User/trigger:** a developer installs the app, changes harness, moves the executable, or upgrades from the Markdown/version-1 model.
 
-The MCP writer uses the project folder name as the section key and sorts sections alphabetically. Two unrelated checkouts with the same basename can replace one another. Separate MCP processes read and replace the aggregate file independently, so overlapping writes can lose acknowledged updates. These are code-derived risks, not reproduced production incidents. Evidence: [status_file.rs](src-tauri/src/status_file.rs), [mcp.rs](src-tauri/src/mcp.rs), bundled [SKILL.md](src-tauri/resources/skills/ctx-ppteer/SKILL.md).
+**Today:** open Settings, install or update the skill, register MCP separately, restart old processes as directed by the README, and hope a new chat publishes. The bundled skill requires an actual harness session ID and tells the agent to skip reporting if none is available.
+
+**Desired outcome:** one supported harness publishes a visible test point, with clear recovery when session identity, configuration, executable path, or schema compatibility prevents it.
+
+**Observed friction:** separate skill/MCP lists, no verification action, and no first-run guidance in an empty viewer. **Code-derived risk:** updating a skill removes the existing target directory before copying; a failed copy can leave an incomplete installation or remove local customization. A registration row can appear configured despite a bad executable command.
+
+Sources: [integration UI](src/integrations/AgentIntegrations.svelte), [skills installer](src-tauri/src/integrations/skills.rs), [registration check](src-tauri/src/integrations/config.rs), [bundled skill](src-tauri/resources/skills/ctx-ppteer/SKILL.md), [upgrade notes](README.md).
+
+### 2. Check progress while working elsewhere
+
+**User/trigger:** a developer returns to the small viewer to decide whether an agent needs attention.
+
+**Today:** scan project/branch groups and plain points, recognize DONE, and hover or focus a point for its age. Project sorting uses the latest record update; point age uses submission time. These are different clocks.
+
+**Desired outcome:** quickly understand the latest reported work and whether the display is reliable.
+
+**Observed friction:** blank waiting state; cached reports look unchanged after a waiting snapshot; session attribution is absent; age controls are hidden until hover/focus. **Code-derived friction:** the health enum and source modification time do not drive the UI, and error text sits at the bottom of the list. Point submission age does not indicate agent liveness or last meaningful edit.
+
+Sources: [viewer](src/viewer/Viewer.svelte), [controller](src/viewer/controller.ts), [rows](src/viewer/rows.ts), [snapshot](src-tauri/src/status/snapshot.rs).
+
+### 3. Clear clutter without losing important work
+
+**User/trigger:** a developer dismisses an irrelevant point or enables retention.
+
+**Today:** dismiss one point with a stable ID and entry timestamp guard. Failed dismissal restores the row. Auto-clear is disabled by default; when enabled, it removes all points older than their submission cutoff while the app is open. Shortening retention requires an Apply action.
+
+**Desired outcome:** keep the board useful while understanding what disappears and how to recover a mistake.
+
+**Observed behavior:** a newly edited unfinished point can still expire because its submission timestamp stays old. This matches the documented policy and is not a timestamp regression. **Code-derived gaps:** there is no undo, removal preview, completion-aware retention, or archive. The UI falls back to entry time when a legacy point lacks submission time, but pruning retains such points. Saving retention can succeed before pruning fails, producing a partial-success state.
+
+Sources: [controller](src/viewer/controller.ts), [retention UI](src/settings/RetentionSettings.svelte), [domain](src-tauri/src/status/domain.rs), [retention command](src-tauri/src/desktop/commands.rs).
+
+### 4. Monitor multiple projects and sessions
+
+**User/trigger:** a developer has several projects, branches, or conversations active.
+
+**Today:** independent sessions have separate records; the viewer combines all points with the same folder and branch. Sort orders help find recently written projects. Animated group removal and reordering preserve visual continuity.
+
+**Desired outcome:** identify the relevant work without confusing its source or scanning every point.
+
+**Observed friction:** two fixture sessions on one project/branch appear as one unlabeled group. **Hypothesis:** this causes confusion when reports disagree or two checkouts share a basename. Some users may prefer aggregation, so exposing raw session IDs everywhere would be premature.
+
+Sources: [domain identity](src-tauri/src/status/domain.rs), [row grouping and sorting](src/viewer/rows.ts), [motion fixture](tests/viewer-motion.js).
+
+### 5. Resume after a crash or broken data
+
+**User/trigger:** an MCP process stops abruptly, a saved document becomes invalid, or the watcher fails.
+
+**Today:** malformed JSON is preserved, the viewer can retain the last valid document, and the watcher retries with periodic reconciliation. However, write locking creates a sidecar file with exclusive creation and removes it only on normal Drop. It is not an OS-held advisory lock. A leftover file makes future writes/dismissals/pruning wait indefinitely. Startup pruning can also block startup when retention is enabled.
+
+**Desired outcome:** resume reporting without manual lock deletion, silent data loss, or an application that appears frozen.
+
+**Observed/code-derived distinction:** the synthetic-lock stall and recovery were reproduced in a temporary directory. A killed-owner scenario was not run against live app data; its consequence follows from the unbounded loop and Drop-only cleanup.
+
+Sources: [store lock](src-tauri/src/status/store.rs), [startup](src-tauri/src/lib.rs), [watcher recovery](src-tauri/src/status/watcher.rs).
 
 ## Product vision
 
-Help developers supervising coding agents understand the latest reported work, blockers, and outcomes across local projects without repeatedly reopening chats.
+Help developers supervising coding agents keep an accurate, compact view of reported work across local projects, recognize what needs attention, and clear old reports with confidence.
 
-This follows from the existing aggregate Markdown file, project sections, status-writing skill, MCP server, and persistent compact window. The product should become more trustworthy before it becomes more expansive. File freshness alone cannot establish that an agent is still running.
+This builds on structured points, completion flags, session isolation, sorting, dismissal, and the small persistent viewer. The product is becoming a personal attention board. Its next gains should come from dependable reporting and understandable state rather than more decorative motion.
 
-### Product principles
+### Principles
 
-- Show uncertainty and source failures where users read statuses.
-- Make setup end with a demonstrated update.
-- Preserve acknowledged updates and expose editing conflicts.
-- Keep reading compact, quiet, and compatible with ordinary Markdown.
-- Add structured metadata only when it supports a concrete user outcome.
+- Make unavailable, empty, and cached states distinguishable.
+- Preserve independent reports and recover from interrupted writes.
+- Verify setup through a real publication, not config presence alone.
+- Keep routine viewing quiet and compact; expose attribution on demand.
+- Separate submission age, last report time, completion, and agent liveness.
+- Make cleanup deliberate and recoverable.
+- Keep status local; evolve the structured contract with clear compatibility rules.
 
 ### Non-goals
 
-- Agent execution or orchestration.
-- A full task-management suite.
-- Cloud collaboration or shared hosted state.
-- A general-purpose Markdown editor.
-- Exhaustive harness coverage before existing integrations work reliably.
+- Running, scheduling, or controlling agents.
+- Turning status points into assignments, sprints, or a task-management system.
+- Restoring arbitrary Markdown viewing or whole-document editing.
+- Cloud synchronization, team accounts, or remote collaboration.
+- Full transcript/history retention.
+- More harness adapters or animation options without evidence of user benefit.
 
-## Highest-value use cases and user stories
+## Prioritization
 
-### Established by the product
+Use `value × strategic fit × confidence ÷ effort`.
 
-- As a developer, I want to see the latest agent-written project status in a persistent window, so that I can monitor work without reopening an agent chat.
-- As a developer, I want to choose the Markdown source and adjust the viewer’s appearance, so that the status view fits my workspace.
-- As an agent integration user, I want to write my project’s status through MCP, so that the viewer reflects work across sessions.
+Value and fit range from 1 to 5. Confidence is a fractional judgment about evidence and expected benefit, not a statistical estimate. Effort is relative scope: 1 is a contained change, 2 spans a flow or native/frontend boundary, and 3 changes persistence or the public contract. Estimates are not delivery dates.
 
-### Hypotheses to validate
+Scores below are recomputed from explicit inputs and supersede the earlier audit's scores. Equal scores are ordered by failure severity. Dependencies gate implementation even when a dependent item has a higher score. Success thresholds are proposed pilot targets, not claims about measured usage.
 
-- As a developer supervising several projects, I want to find the project that needs attention, so that I do not scan a long aggregate document.
-- As a developer editing a status while agents run, I want conflicts surfaced before saving, so that I do not erase newer work.
-- As a developer setting up a harness for the first time, I want to verify that a real status reaches the viewer, so that I know setup is complete.
-- As a developer recovering from a bad update, I want to inspect and restore a recent version, so that useful context is not lost.
-- As a developer leaving agents running in the background, I want an optional alert when a project needs input, so that I do not repeatedly check the window.
-
-## Prioritization framework
-
-The ranking weighs user value, strategic fit, effort, and uncertainty:
-
-`score = value × strategic fit × confidence ÷ effort`
-
-Value and fit use a 1–5 scale. Effort is 1 for small, 2 for medium, and 3 for large. Confidence is a judgment about evidence and feasibility, not measured ROI. Success targets below are proposed pilot thresholds because the repository supplies no usage baseline.
+| Rank | Phase | Update | Value | Fit | Confidence | Effort | Score |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | Now | Recover from interrupted writes | 5 | 5 | 95% | 2 | 11.88 |
+| 2 | Now | Explain empty, cached, and unhealthy states | 5 | 5 | 95% | 2 | 11.88 |
+| 3 | Now | Verify first publication and upgrades | 4 | 5 | 85% | 2 | 8.50 |
+| 4 | Next | Make dismissal and retention recoverable | 4 | 5 | 85% | 3 | 5.67 |
+| 5 | Next | Clarify project and session attribution | 4 | 4 | 75% | 3 | 4.00 |
+| 6 | Next | Focus the board on relevant reports | 4 | 4 | 65% | 3 | 3.47 |
+| 7 | Later | Opt-in alerts for input-needed transitions | 3 | 4 | 40% | 3 | 1.60 |
 
 ## Now
 
-### 1. Show whether the displayed status is trustworthy
+### 1. Recover from interrupted writes
 
-**Score:** 9.50. **Effort:** Small. **Confidence:** 95%.
+**Problem/evidence:** an abandoned existence lock can block all mutations indefinitely, including startup pruning. The synthetic-lock probe reproduced waiting and subsequent recovery. See [store.rs](src-tauri/src/status/store.rs), `lock` and `SidecarLock::drop`; [startup](src-tauri/src/lib.rs).
 
-**Problem and evidence.** The backend exposes health, errors, and modification time, but the viewer ignores them. Missing, deleted, invalid, oversized, or unreadable sources can leave old content looking current. Queued updates can also remain hidden after selection ends. Evidence: [app_state.rs](src-tauri/src/app_state.rs), [app-types.ts](src/app-types.ts), [Viewer.svelte](src/Viewer.svelte).
+**User story:** As a developer resuming agent work after a crash, I want reporting to recover automatically or fail with an actionable message, so that my status board stays usable.
 
-**User story and change.** As a developer checking agent progress, I want to see whether the displayed status is current or unreadable, so that I can decide whether to act on it. Add a quiet source-health indicator, last successful read/content-change time, useful empty states, and retry/source-selection actions. Keep file freshness distinct from agent liveness. Apply queued updates after selection ends.
+**Change/vision fit:** use crash-releasing interprocess coordination with bounded waiting and useful contention errors. Preserve atomic replacement. Keep blocking work from freezing MCP/native async request handling. Correct the lock description in the README. This is technical work required for reliable reporting.
 
-**Dependencies and tradeoff.** Extend frontend snapshot types and keep source identity attached to cached content. Much of the backend data already exists, so this improves every reading session at low effort. It should precede navigation and alerts because those depend on trusted content.
+**Impact/effort/confidence:** high impact when triggered; medium effort; 95% confidence in the failure mechanism, unknown incident frequency.
 
-**Acceptance criteria.** Missing, deleted, invalid UTF-8, oversized, and permission-denied files show an actionable state. Old content identifies its source. The newest queued update appears after deselection. Healthy viewing remains compact.
+**Dependencies:** platform-safe locking, consistent use by write/dismiss/prune, and a non-destructive recovery policy. Never remove a lock just because it is old while another process might own it.
 
-**Success indicator.** In a pilot, 90% of users correctly identify current versus stale/error content within five seconds, with zero missed queued updates in scenario checks.
+**Acceptance:** terminate a lock owner in a disposable store and verify a new writer succeeds; live contention ends with success or a bounded error; concurrent distinct-session writes remain intact; retention-enabled startup remains responsive; a failed write leaves valid bytes unchanged.
 
-### 2. Get one agent publishing successfully
+**Success:** zero indefinite waits in the crash/contention matrix on macOS, Windows, and Linux; uncontended and recovery operations complete or produce an explicit error within a proposed five-second ceiling.
 
-**Score:** 3.83. **Effort:** Medium. **Confidence:** 85%.
+### 2. Explain empty, cached, and unhealthy states
 
-**Problem and evidence.** Settings separates skill installation from MCP registration and never verifies an end-to-end connection. Registration checks configuration presence, not a working connection. Gemini skill and Cursor MCP support are also asymmetric. Evidence: [Settings.svelte](src/Settings.svelte), [lib.rs](src-tauri/src/lib.rs).
+**Problem/evidence:** a waiting snapshot can render a blank board or retain reports without a warning. Existing errors render below all content. See [snapshot](src-tauri/src/status/snapshot.rs), `snapshot_for`; [controller](src/viewer/controller.ts), `commitPending`; [viewer](src/viewer/Viewer.svelte).
 
-**User story and change.** As a first-time agent user, I want to connect my chosen agent and verify a status reaches the viewer, so that I know setup is complete. Add a per-harness setup checklist, explicit support matrix, connection test, and copyable verification prompt for a fresh agent session. Explain configured versus verified and when a restart is needed. Preserve existing configuration and back up replaced skill/config content.
+**User story:** As a developer checking progress, I want to know whether there are no reports or whether reporting is unavailable, so that I do not trust an old board or troubleshoot a healthy empty one.
 
-**Dependencies and tradeoff.** Test the installed executable and MCP handshake. Actual publication remains an end-to-end check in a real harness. This has more integration work than item 1, but setup has little value if users never get an agent writing.
+**Change/vision fit:** add distinct first-run, empty-after-cleanup, waiting, and cached-error states. Keep a compact health message visible above scrolling content, with retry and setup/diagnostic guidance. Show last successful read/report time where useful. State that a readable document does not prove an agent is active.
 
-**Acceptance criteria.** A clean user profile can publish a visible sample update with one supported harness. Missing executables and malformed configs produce specific recovery guidance. Existing unrelated configuration survives. A failed check never reports verified.
+**Impact/effort/confidence:** high across setup and return visits; medium effort; 95% confidence in observed ambiguity.
 
-**Success indicator.** In a pilot, 80% of first-time users publish a first status within five minutes without help. Record abandonment by setup step.
+**Dependencies:** controller must retain health and last-success metadata independently of row animation/selection. Do not delay critical errors until a selection clears. Use #1's bounded errors.
 
-### 3. Preserve agent updates and human edits
+**Acceptance:** first launch, last-point dismissal, expired board, deleted file, invalid JSON, permission failure, and watcher failure are distinguishable. Cached reports remain labeled. Recovery clears the warning. Keyboard and screen-reader users can reach guidance in a compact window.
 
-**Score:** 3.17. **Effort:** Large. **Confidence:** 95%.
+**Success:** 90% of five or more pilot users identify the correct state and next action within five seconds. Every failure fixture displays a visible message without scrolling.
 
-**Problem and evidence.** Each MCP process reads and replaces the entire aggregate file without interprocess coordination. Atomic replacement avoids partial files but cannot prevent lost updates. Human saves carry no base-content check, and Cancel retains the draft. Evidence: [status_file.rs](src-tauri/src/status_file.rs), [mcp.rs](src-tauri/src/mcp.rs), [lib.rs](src-tauri/src/lib.rs), [Viewer.svelte](src/Viewer.svelte).
+### 3. Verify first publication and upgrades
 
-**User story and change.** As a developer running agents while correcting a note, I want every acknowledged update preserved and conflicts shown, so that my overview does not silently lose work. Coordinate application-owned writers across processes. Check a content hash or base version before human saves. Keep drafts separate from displayed content. Cancel should restore the latest accepted text. On conflict, offer reload, keep draft, and explicit overwrite. Keep recovery copies bounded.
+**Problem/evidence:** skill installation, MCP configuration, schema compatibility, and real session identity are separate requirements. Current registration checks presence and Settings has no verify action. Updating a skill removes the destination before copying. See [integration UI](src/integrations/AgentIntegrations.svelte), [config](src-tauri/src/integrations/config.rs), [skills](src-tauri/src/integrations/skills.rs), [README](README.md), [bundled skill](src-tauri/resources/skills/ctx-ppteer/SKILL.md).
 
-**Dependencies and tradeoff.** Requires a shared locking/write protocol in both the UI and MCP, content-based conflict checks, and Markdown-aware section handling. Arbitrary external editors cannot be forced to follow the protocol. This is technical work required for a user-facing trust outcome, not maintenance for its own sake.
+**User story:** As a new or upgrading user, I want to prove my chosen harness can publish a status using its real session ID, so that I know reporting is ready.
 
-**Acceptance criteria.** A controlled suite of 1,000 interleaved writes to distinct projects preserves all acknowledged final section updates. Same-content edit conflicts are surfaced. Cancel discards the draft and applies the newest queued snapshot. External changes detected before save are never silently overwritten.
+**Change/vision fit:** provide a per-harness checklist with separate configured, reachable, compatible, and publication-verified states. Include a copyable fresh-session test prompt, restart guidance, and an explicit unsupported-session-ID outcome. Make skill replacement staged and recoverable. Explain intentional skill/MCP support asymmetries.
 
-**Success indicator.** Release gate: zero lost acknowledged updates in the controlled concurrency suite, and every simulated human/agent edit conflict is detected.
+**Impact/effort/confidence:** high activation and upgrade benefit; medium effort; 85% confidence, pending real first-use sessions.
+
+**Dependencies:** bounded MCP calls from #1 and empty-state guidance from #2; installed executable and skill version checks; test publication explicitly initiated by the user.
+
+**Acceptance:** a clean profile publishes a real point with a supported harness; a moved executable, old skill, old schema reader, malformed config, and missing session ID produce specific guidance. A failed skill copy preserves the previous installation. Unrelated harness config survives.
+
+**Success:** at least 80% of pilot users publish within five minutes without assistance; no failed verification is labeled ready; installed skill update failure leaves a usable previous version.
 
 ## Next
 
-### 4. Give projects distinct identities
+### 4. Make dismissal and retention recoverable
 
-**Score:** 2.25. **Effort:** Large. **Confidence:** 75%.
+**Problem/evidence:** guarded dismissal is implemented, but successful removal has no undo. Auto-clear deletes unfinished and completed points by original submission time; recent edits can expire. Legacy missing timestamps have inconsistent displayed versus effective expiry. Saving retention before prune failure can leave settings applied despite an error. See [domain](src-tauri/src/status/domain.rs), [retention command](src-tauri/src/desktop/commands.rs), [retention UI](src/settings/RetentionSettings.svelte).
 
-**Problem and evidence.** The folder name is the section key. Two unrelated checkouts named `app` can replace the same section, while multiple sessions in one folder are currently aggregated. Evidence: [mcp.rs](src-tauri/src/mcp.rs), [status_file.rs](src-tauri/src/status_file.rs), bundled [SKILL.md](src-tauri/resources/skills/ctx-ppteer/SKILL.md).
+**User story:** As a developer clearing old reports, I want to preview removals and recover mistakes, so that I can keep the board concise without losing active context.
 
-**User story and change.** As a developer working across similarly named repositories, I want their statuses kept separate, so that I can tell which project needs attention. Add an optional stable project identifier alongside the display name, preserve the existing MCP contract, and keep the Markdown readable. Validate whether session-level separation is needed before adding it.
+**Change/vision fit:** add short-lived undo and a bounded local recently-cleared list for dismissal/expiry, not a transcript history. Preview affected counts before enabling or shortening retention. Clarify submission-age expiry and decide with users whether completed-only or last-meaningful-edit retention better matches intent. Report settings-applied/prune-failed distinctly.
 
-**Dependencies and tradeoff.** Update the skill and MCP together, migrate existing sections without duplication, and depend on protected writes from item 3. This matters greatly for affected users, but the frequency of duplicate names is unknown.
+**Impact/effort/confidence:** high for users who enable cleanup; large effort; 85% confidence in mechanics, lower confidence about the best policy. Auto-clear is off by default, which keeps this below universal setup/health work.
 
-**Acceptance criteria.** Two paths with the same basename remain distinct across restarts. Old folder-name-only clients still work. Users can understand which checkout each section represents.
+**Dependencies:** #1, stable point IDs already present, bounded recovery storage, and an explicit legacy timestamp rule. Do not restore over newer agent reports or blindly reuse unknown IDs.
 
-**Success indicator.** Zero cross-project replacements in identity tests and 90% correct project identification in a pilot with duplicate names.
+**Acceptance:** undo a dismissal without duplicating a point or restoring superseded text; preview matches actual removals; recently edited unfinished and missing-timestamp fixtures follow the selected policy; failed pruning explains the saved policy; restored reports obey clear expiry rules.
 
-### 5. Find the project that needs attention
+**Success:** 90% of seeded cleanup mistakes are recoverable within 30 seconds; at least 90% of pilot users predict which points expire; recovery storage stays within a documented bound.
 
-**Score:** 1.73. **Effort:** Large. **Confidence:** 65%.
+### 5. Clarify project and session attribution
 
-**Problem and evidence.** The default viewer is 360 × 220 and shows one scrolling document. Project ordering exposes only A–Z. There is no filtering, collapse, recent-update ordering, or archive flow. Evidence: [tauri.conf.json](src-tauri/tauri.conf.json), [Viewer.svelte](src/Viewer.svelte), [Settings.svelte](src/Settings.svelte), [status_file.rs](src-tauri/src/status_file.rs).
+**Problem/evidence:** project/session storage isolation is real, but the UI merges same-folder/same-branch records without provenance. Same-basename checkouts can appear to be one project. See [domain](src-tauri/src/status/domain.rs), `upsert`; [rows](src/viewer/rows.ts), `viewerRows`.
 
-**User story and change.** As a developer monitoring several projects, I want to focus on relevant and recently changed notes, so that I can find the next thing to check without scanning the whole file. Add a project filter/jump control, collapse completed or inactive sections, and optional recent-update ordering. Archive explicitly rather than deleting. Preserve reading position when content refreshes.
+**User story:** As a developer with overlapping conversations or checkouts, I want to identify the source of a report, so that I can distinguish contradictory or unrelated work.
 
-**Dependencies and tradeoff.** Requires stable identities from item 4 and per-project content-change metadata. Whole-file modification time is insufficient. This should wait until multi-project use is confirmed.
+**Change/vision fit:** validate a stable project identifier separate from display name, then add optional readable session/harness attribution on demand. Preserve the compact aggregate view. Do not expose raw session IDs as the default experience.
 
-**Acceptance criteria.** With ten project sections, users can find a named project and return to the full document. Unchanged content does not reorder itself. Collapsed/filter state and reading position survive refresh.
+**Impact/effort/confidence:** high for overlapping work, uncertain prevalence; large effort because identity changes the contract; 75% confidence.
 
-**Success indicator.** Halve median time to find a relevant project versus the current viewer without increasing errors.
+**Dependencies:** decide whether identity means repository or checkout; backwards-compatible schema/MCP/skill evolution; a legacy display policy. Session IDs remain identifiers, not authentication.
+
+**Acceptance:** two same-name checkouts can remain visually distinct, two sessions can be attributed without showing raw IDs, old clients still publish under a documented fallback, and migration never duplicates or merges records silently.
+
+**Success:** 90% correct source identification in a pilot containing duplicate names and conflicting session reports; zero identity collisions in the supported migration matrix.
+
+### 6. Focus the board on relevant reports
+
+**Problem/evidence:** sorting helps, but all points remain in one list, with no filter or user-controlled collapse. Group collapse currently refers to removal animation, not a navigation feature. Hidden age controls and retained completed reports add scanning work. See [viewer](src/viewer/Viewer.svelte), [rows](src/viewer/rows.ts).
+
+**User story:** As a developer supervising several projects, I want to filter and temporarily hide irrelevant reports, so that I can find work needing attention quickly.
+
+**Change/vision fit:** add a minimal project jump/filter, optional unfinished-only view, and user-controlled group collapse. Preserve filters, selection, and reading position across updates. Define whether recency means latest write or meaningful content change before expanding sorting.
+
+**Impact/effort/confidence:** medium to high if multi-project volume is common; large effort across view state and animation; 65% confidence until workload observation.
+
+**Dependencies:** attribution decisions in #5 for duplicate names; stable IDs and sorting already exist. Filtering must not delete records or accidentally broaden MCP read access.
+
+**Acceptance:** in a ten-project/50-point fixture, find a named project, inspect unfinished work, and return to all reports; background updates preserve position and collapsed state; keyboard navigation and reduced motion work.
+
+**Success:** halve median find-the-relevant-report time against the current viewer without increasing wrong-project choices.
 
 ## Later
 
-### 6. Recover a recent overwritten note
+### 7. Opt-in alerts for input-needed transitions
 
-**Score:** 1.40. **Effort:** Large. **Confidence:** 60%.
+**Problem/evidence:** DONE is structured, but blocked/input-needed state is free text and there are no native notifications. Missing an important transition is a hypothesis, not a demonstrated customer problem. See [Point](src-tauri/src/status/domain.rs), [MCP](src-tauri/src/mcp.rs), [viewer](src/viewer/Viewer.svelte).
 
-**Problem and evidence.** The product replaces current state and keeps no persistent history. Earlier context must be recovered from external backups or chat history. Evidence: [status_file.rs](src-tauri/src/status_file.rs), [lib.rs](src-tauri/src/lib.rs), [mcp.rs](src-tauri/src/mcp.rs).
+**User story:** As a developer leaving agents running, I want an optional alert when a project needs my input, so that work does not wait for my next glance.
 
-**User story and change.** As a developer recovering from an incorrect status update, I want to inspect and restore a recent version, so that I can recover useful context. Offer bounded local per-project history and conflict-aware restoration. Set a small retention default and make storage and clear-history controls explicit.
+**Change/vision fit:** only after validation, introduce a backwards-compatible input-needed state and per-project opt-in alerts. Deduplicate by stable identity/transition; support mute and quiet periods. Keep ordinary progress silent.
 
-**Dependencies and tradeoff.** Requires protected writes, project identities, bounded storage, and retention decisions. Defer until incident frequency is known.
+**Impact/effort/confidence:** potentially useful, with interruption and false-positive costs; large effort; 40% confidence.
 
-**Acceptance criteria.** Restoring one project’s prior note does not change another project or silently overwrite a newer update. Retention limits are honored and data remains local.
+**Dependencies:** #2 and #5; agreed transition semantics, native permissions, and restart-safe deduplication. A missing report must not be inferred to mean blocked or complete.
 
-**Success indicator.** 90% of seeded recovery tasks succeed within one minute. Measure real recovery demand before expanding retention.
+**Acceptance:** one alert per confirmed transition, none for polling/restart or unrelated text edits, clear mute controls, and navigation to the correct project.
 
-### 7. Notify only when user action is needed
+**Success:** halve response time to genuine input-needed events while fewer than 10% of pilot alerts are judged unnecessary. Do not build this if observed workflows do not need it.
 
-**Score:** 0.80. **Effort:** Large. **Confidence:** 40%.
+## Starting point and tradeoffs
 
-**Problem and evidence.** The viewer has no typed blocked/completed state or notification flow. The bundled skill requests updates at material changes, but an unfocused user may miss them. Demand and reliable event semantics are unknown. Evidence: bundled [SKILL.md](src-tauri/resources/skills/ctx-ppteer/SKILL.md), [mcp.rs](src-tauri/src/mcp.rs), [Viewer.svelte](src/Viewer.svelte).
+Start with #1, #2, and #3. Crash recovery protects the core write path. Clear health/empty states prevent misplaced trust and make setup understandable. Verified publication converts installation into a working user outcome. These directly support the existing product without requiring a new persona or workflow.
 
-**User story and change.** As a developer leaving agents running in the background, I want an optional alert when a project needs input, so that I can respond without repeatedly checking the window. Add backward-compatible optional status fields, then opt-in per-project alerts for meaningful transitions. Include mute and quiet periods. Keep ordinary progress silent.
+Normal write serialization and the motion queue do not need a new broad refactor. Focus technical work on the failure paths that block user outcomes. Retention recovery comes before full history; it addresses a new irreversible interaction already present. Project filtering follows source attribution so a faster interface does not make ambiguity easier to miss. More animation and color controls have lower value than these gaps.
 
-**Dependencies and tradeoff.** Requires identities, trustworthy metadata, validated status semantics, native permissions, and deduplication. Alerts have an interruption cost, so validate demand first.
+## Technical prerequisites and maintenance
 
-**Acceptance criteria.** One alert is sent per real transition. Polling or restart does not duplicate alerts. Text-only progress edits do not alert. Users can mute alerts and reach the relevant note.
+- Product prerequisites: crash-safe bounded coordination for reliable publishing; health state propagation for trustworthy reading; staged skill installation for safe upgrades; bounded recovery storage for undo; identity migration for attribution.
+- Routine maintenance: retain the current regression suites and consider running them before release packaging. The supplied release workflow builds bundles but does not explicitly run the controller, Rust, or motion suites. Native smoke checks should cover fresh install, upgrade, link opening, startup with retention, and crash recovery.
+- Measure before optimizing: pruning currently rewrites the document even when nothing expires. This can generate unnecessary file events, but no measured user-visible performance problem was established, so it is not a separate roadmap feature.
 
-**Success indicator.** Halve response time to input-needed events while fewer than 10% of alerts are rated unnecessary.
+Sources: [release workflow](.github/workflows/release.yml), [store pruning](src-tauri/src/status/store.rs), [watcher](src-tauri/src/status/watcher.rs).
 
-## Recommended starting point
+## Validation that could change priorities
 
-Start with these three updates:
-
-1. **Show source health and recovery state.** It uses data the backend already produces and fixes the core trust problem for every user.
-2. **Verify one real agent publishing path.** It turns setup from configuration work into a demonstrated first success.
-3. **Protect concurrent writes and drafts.** It prevents silent data loss before the product encourages more projects, sessions, or history.
-
-The third item is the largest effort. It should be treated as a release gate for broader multi-project use, even if items 1 and 2 ship independently.
-
-## Important tradeoffs
-
-Health beats navigation because every user relies on accurate content. Setup beats wider harness coverage because a registered config does not prove a useful connection. Protected writes come before encouraging more concurrent projects. Keep free-form Markdown as the primary artifact and add only the metadata needed for identity, freshness, conflicts, or validated notifications. History and alerts should follow observed incidents rather than become generic feature expansion.
-
-## Validation plan
-
-- Observe single-project and multi-project sessions to determine whether navigation is a real need.
-- Run first-use setup sessions across the most-used harnesses, starting with a clean profile and a moved executable.
-- Measure status-edit frequency and overlap with agent writes.
-- Test whether users need last reported activity, agent liveness, or actionable blockers when they ask whether a status is current.
-- Seed recovery and missed-input scenarios before prioritizing history or alerts.
-- Decide whether identity should mean checkout, repository, project, or agent session. That choice affects navigation, history, and notifications.
+1. Observe five developers across a single-project and a multi-project session. Record project/session counts, glance frequency, and how they choose their next action.
+2. Test clean installation and upgrade with the most-used harnesses. Separate configuration, handshake, real session identity, and actual publication failures.
+3. Reproduce owner-process termination and contention on all supported operating systems. This is a release gate for #1, not a request to expand platform scope.
+4. Ask users what dismissal means: permanently discard, hide locally, or acknowledge. Clarify whether the publishing agent may later reintroduce the report.
+5. Test expiry expectations with unfinished, recently edited, completed, caller-timestamped, and legacy points. If cleanup confusion is frequent, move #4 into Now.
+6. Determine whether duplicate checkout names and simultaneous conversations occur often enough to justify a new project identity. Keep existing aggregation if it matches observed needs.
+7. Clarify whether the board reports submitted work, current agent liveness, or actionable blockers. The current data proves only submitted reports.
+8. Establish local or consented measurement baselines for time to first status, state comprehension, find time, cleanup recovery, and missed input requests. Proposed targets are decision aids, not production telemetry claims.

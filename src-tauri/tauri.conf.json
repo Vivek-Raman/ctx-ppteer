@@ -19,7 +19,7 @@
         "minWidth": 260,
         "minHeight": 120,
         "resizable": true,
-        "alwaysOnTop": false,
+        "alwaysOnTop": true,
         "decorations": true,
         "hiddenTitle": true,
         "acceptFirstMouse": true,
@@ -50,7 +50,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "shortDescription": "Always-on-top agent status viewer",
+    "shortDescription": "Agent status viewer",
     "longDescription": "A lightweight viewer for structured agent status points."
   }
 }

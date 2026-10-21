@@ -1,7 +1,7 @@
 [package]
 name = "ctx-ppteer"
 version = "0.2.0"
-description = "A lightweight always-on-top agent status viewer"
+description = "A lightweight agent status viewer"
 license = "GPL-3.0-only"
 authors = ["ctx-ppteer contributors"]
 edition = "2021"
@@ -26,6 +26,7 @@ schemars = "1"
 uuid = { version = "1", features = ["v4", "v5"] }
 sha2 = "0.10"
 toml_edit = "0.22"
+fs2 = "0.4"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]

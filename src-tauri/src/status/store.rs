@@ -1,5 +1,6 @@
 use crate::status::domain::{self, Document, Entry, Point};
 use chrono::Utc;
+use fs2::FileExt;
 use std::{
     fs::{self, File, OpenOptions},
     io::{Read, Write},
@@ -41,10 +42,11 @@ pub struct StatusStore {
 }
 struct SidecarLock {
     path: PathBuf,
-    _file: File,
+    file: File,
 }
 impl Drop for SidecarLock {
     fn drop(&mut self) {
+        let _ = self.file.unlock();
         let _ = fs::remove_file(&self.path);
     }
 }
@@ -60,15 +62,15 @@ impl StatusStore {
     fn lock(&self) -> Result<SidecarLock, StatusError> {
         fs::create_dir_all(self.parent()?)?;
         let path = self.path.with_extension("lock");
+        let file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .open(&path)?;
         loop {
-            match OpenOptions::new()
-                .create_new(true)
-                .read(true)
-                .write(true)
-                .open(&path)
-            {
-                Ok(file) => return Ok(SidecarLock { path, _file: file }),
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            match file.try_lock_exclusive() {
+                Ok(()) => return Ok(SidecarLock { path, file }),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                     thread::sleep(Duration::from_millis(2))
                 }
                 Err(error) => return Err(error.into()),
@@ -259,6 +261,20 @@ mod tests {
             }
         });
         assert_eq!(store.read().unwrap().entries.len(), 9);
+    }
+
+    #[test]
+    fn stale_lock_file_does_not_block_writes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("status.json");
+        fs::write(path.with_extension("lock"), []).unwrap();
+
+        StatusStore::new(path.clone())
+            .upsert("p".into(), "s".into(), "main".into(), vec![point("x")])
+            .unwrap();
+
+        assert_eq!(StatusStore::new(path).read().unwrap().entries.len(), 1);
+        assert!(!dir.path().join("status.lock").exists());
     }
 
     #[test]

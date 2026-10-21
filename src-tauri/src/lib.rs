@@ -1,4 +1,4 @@
-use tauri::{Manager, WindowEvent};
+use tauri::Manager;
 
 pub mod desktop;
 pub mod integrations;
@@ -35,24 +35,13 @@ pub fn run() {
             let settings =
                 preferences::settings_owner(app.handle()).map_err(std::io::Error::other)?;
             app.manage(settings.clone());
-            if let Some(window) = app.get_webview_window("main") {
-                desktop::window_geometry::restore(&window, &settings);
-                let state_window = window.clone();
-                let settings = settings.clone();
-                window.on_window_event(move |event| {
-                    if matches!(event, WindowEvent::Moved(_) | WindowEvent::Resized(_)) {
-                        desktop::window_geometry::capture(&state_window, &settings);
-                    }
-                });
-            }
-            let settings_value = settings.snapshot();
+            app.get_webview_window("main")
+                .ok_or_else(|| std::io::Error::other("Main window unavailable"))?
+                .set_always_on_top(settings.snapshot().pinned)
+                .map_err(std::io::Error::other)?;
             let path = paths::status_path().map_err(std::io::Error::other)?;
             let state = status::snapshot::ViewerState::new(path.clone());
             app.manage(state.clone());
-            app.get_webview_window("main")
-                .ok_or_else(|| std::io::Error::other("Main window unavailable"))?
-                .set_always_on_top(settings_value.pinned)
-                .map_err(std::io::Error::other)?;
             let _ = status::retention::clear_expired_points(&state, &settings);
             status::snapshot::update(app.handle(), &state);
             status::watcher::start(app.handle().clone(), state, settings);

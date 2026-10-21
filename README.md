@@ -2,7 +2,7 @@
 
 ctx-ppteer is a compact Tauri desktop status viewer. Agents send structured points through its MCP server, and the window refreshes when the JSON changes. Project headings, branch text, bullets, appearance, and always-on-top behavior retain the existing layout. Session IDs are stored but not displayed.
 
-The MCP manages `~/.local/share/ctx-ppteer/status.json`, shared with the desktop app on all platforms. It works before the app is opened. Settings remain in `~/.config/ctx-ppteer/settings.json`. The settings page controls appearance, window behavior, project order, and agent integration. Old source-path and Markdown editor preferences are ignored. Existing Markdown files remain untouched and are no longer loaded.
+The MCP manages `~/.local/share/ctx-ppteer/status.json`, shared with the desktop app on all platforms. It works before the app is opened. Settings remain in `~/.config/ctx-ppteer/settings.json`. The settings page controls appearance, always-on-top behavior, project order, and agent integration. Old source-path, window, and Markdown editor preferences are ignored. Existing Markdown files remain untouched and are no longer loaded.
 
 ## Status schema and MCP
 
@@ -14,7 +14,7 @@ The supplied session ID identifies the record; it is not authentication of the c
 
 The viewer renders points directly with Svelte and keeps the last valid view if a read fails. It groups by project and branch, with no session labels. Dismissal sends the point ID plus the entry snapshot timestamp; the old point index remains accepted for compatibility. Markdown rendering, source-file selection, and whole-document editing have been removed.
 
-External edits to settings are read at startup. Restart the app after changing `settings.json` outside the app. Window moves persist geometry without publishing a settings update.
+External edits to settings are read at startup. Restart the app after changing `settings.json` outside the app.
 
 After upgrading the app, update installed copies of the skill through Settings. Older app and MCP processes cannot read version 2 documents, so upgrade and restart them before the first write. The previous Markdown `status` argument is no longer supported. This project does not migrate a user's status file until a successful write occurs.
 

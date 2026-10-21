@@ -6,7 +6,7 @@ use std::{
 };
 use tauri::{AppHandle, Emitter};
 
-use crate::{desktop::window_geometry::WindowState, paths};
+use crate::paths;
 
 pub const PROJECT_DIRECTORY_ASC: &str = "project-directory-asc";
 pub const UPDATED_AT_DESC: &str = "updated-at-desc";
@@ -45,8 +45,6 @@ pub struct Settings {
     pub project_sort_order: ProjectSortOrder,
     #[serde(default)]
     pub auto_clear_after_minutes: Option<u64>,
-    #[serde(default)]
-    pub window: Option<WindowState>,
 }
 
 fn default_theme() -> Theme {
@@ -59,7 +57,7 @@ fn default_text_scale() -> f64 {
     1.0
 }
 fn default_pinned() -> bool {
-    false
+    true
 }
 fn default_project_sort_order() -> ProjectSortOrder {
     ProjectSortOrder::UpdatedAtDesc
@@ -74,7 +72,6 @@ impl Default for Settings {
             pinned: default_pinned(),
             project_sort_order: default_project_sort_order(),
             auto_clear_after_minutes: None,
-            window: None,
         }
     }
 }
@@ -141,6 +138,13 @@ fn persist(path: &Path, settings: &Settings) -> Result<(), String> {
     Ok(())
 }
 
+fn has_removed_window_preferences(contents: &[u8]) -> bool {
+    serde_json::from_slice::<serde_json::Value>(contents)
+        .ok()
+        .and_then(|value| value.as_object().cloned())
+        .is_some_and(|settings| settings.contains_key("window"))
+}
+
 pub struct SettingsOwner {
     path: PathBuf,
     settings: Mutex<Settings>,
@@ -155,6 +159,9 @@ impl SettingsOwner {
                 let settings: Settings = serde_json::from_slice(&contents)
                     .map_err(|error| format!("Unable to read {}: {error}", path.display()))?;
                 validate(&settings)?;
+                if has_removed_window_preferences(&contents) {
+                    persist(&path, &settings)?;
+                }
                 settings
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -241,72 +248,11 @@ impl SettingsOwner {
             Ok(())
         })
     }
-    pub(crate) fn restore_pinned_if_current(
-        &self,
-        expected: bool,
-        previous: bool,
-    ) -> Result<Settings, String> {
-        self.update(|settings| {
-            if settings.pinned == expected {
-                settings.pinned = previous;
-            }
-            Ok(())
-        })
-    }
-    pub(crate) fn restore_if_current(
-        &self,
-        expected: &Settings,
-        previous: &Settings,
-    ) -> Result<bool, String> {
-        let mut current = self.settings.lock().map_err(|_| "Settings unavailable")?;
-        if *current != *expected {
-            return Ok(false);
-        }
-        persist(&self.path, previous)?;
-        *current = previous.clone();
-        if let Some(publish) = &self.publisher {
-            publish(previous);
-        }
-        Ok(true)
-    }
     pub fn set_pinned(&self, pinned: bool) -> Result<Settings, String> {
         self.update(|settings| {
             settings.pinned = pinned;
             Ok(())
         })
-    }
-    pub fn set_window(&self, window: WindowState) -> Result<Settings, String> {
-        self.update_silent(|settings| {
-            if settings.window.as_ref() != Some(&window) {
-                settings.window = Some(window);
-            }
-            Ok(())
-        })
-    }
-    pub fn set_window_maximized(&self, maximized: bool) -> Result<Settings, String> {
-        self.update_silent(|settings| {
-            if let Some(window) = settings.window.as_mut() {
-                if window.maximized != maximized {
-                    window.maximized = maximized;
-                }
-            }
-            Ok(())
-        })
-    }
-    fn update_silent<F>(&self, change: F) -> Result<Settings, String>
-    where
-        F: FnOnce(&mut Settings) -> Result<(), String>,
-    {
-        let mut current = self.settings.lock().map_err(|_| "Settings unavailable")?;
-        let mut candidate = current.clone();
-        change(&mut candidate)?;
-        validate(&candidate)?;
-        if candidate == *current {
-            return Ok(current.clone());
-        }
-        persist(&self.path, &candidate)?;
-        *current = candidate.clone();
-        Ok(candidate)
     }
     pub fn set_appearance(
         &self,
@@ -348,35 +294,30 @@ pub fn settings_owner(app: &AppHandle) -> Result<Arc<SettingsOwner>, String> {
 mod tests {
     use super::*;
     #[test]
-    fn defaults_and_legacy_window_deserialization_are_preserved() {
+    fn ignores_removed_window_preferences() {
         let settings: Settings = serde_json::from_str(r#"{"sourcePath":"/tmp/status.md","window":{"monitor_name":"Display","relative_x":0.25,"relative_y":0.5}}"#).unwrap();
-        assert_eq!(
-            settings,
-            Settings {
-                window: Some(WindowState {
-                    monitor_name: Some("Display".into()),
-                    relative_x: 0.25,
-                    relative_y: 0.5,
-                    width: None,
-                    height: None,
-                    maximized: false
-                }),
-                ..Settings::default()
-            }
-        );
+        assert_eq!(settings, Settings::default());
+    }
+    #[test]
+    fn recognizes_removed_window_preferences() {
+        assert!(has_removed_window_preferences(
+            br#"{"window":{"relative_x":0.25}}"#
+        ));
+        assert!(!has_removed_window_preferences(br#"{"theme":"dark"}"#));
     }
     #[test]
     fn concurrent_disjoint_updates_retain_both() {
         let directory = tempfile::tempdir().unwrap();
         let owner = SettingsOwner::from_path(directory.path().join("settings.json")).unwrap();
         let one = owner.clone();
-        let a = std::thread::spawn(move || one.set_pinned(true).unwrap());
+        let a =
+            std::thread::spawn(move || one.set_appearance("dark", "#c98c5a".into(), 1.0).unwrap());
         let two = owner.clone();
         let b = std::thread::spawn(move || two.set_retention(Some(10)).unwrap());
         a.join().unwrap();
         b.join().unwrap();
         let settings = owner.snapshot();
-        assert!(settings.pinned);
+        assert_eq!(settings.theme, Theme::Dark);
         assert_eq!(settings.auto_clear_after_minutes, Some(10));
     }
     #[test]
@@ -403,7 +344,7 @@ mod tests {
             publisher: None,
         };
         fs::write(directory.path().join("missing"), "file").unwrap();
-        assert!(owner.set_pinned(true).is_err());
+        assert!(owner.set_retention(Some(10)).is_err());
         assert_eq!(owner.snapshot(), before);
     }
 
@@ -420,7 +361,8 @@ mod tests {
         )
         .unwrap();
         let one = owner.clone();
-        let a = std::thread::spawn(move || one.set_pinned(true).unwrap());
+        let a =
+            std::thread::spawn(move || one.set_appearance("dark", "#c98c5a".into(), 1.0).unwrap());
         let two = owner.clone();
         let b = std::thread::spawn(move || two.set_retention(Some(10)).unwrap());
         a.join().unwrap();

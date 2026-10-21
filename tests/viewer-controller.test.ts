@@ -7,7 +7,7 @@ const settings: Settings = {
   theme: 'light',
   primaryColor: '#c98c5a',
   textScale: 1,
-  pinned: false,
+  pinned: true,
   projectSortOrder: 'project-directory-asc',
   autoClearAfterMinutes: null,
 };

@@ -11,10 +11,9 @@ pub(crate) fn install_menu(app: &tauri::App) -> tauri::Result<()> {
         application.insert(&settings, 1)?;
     }
     app.set_menu(menu)?;
-    app.on_menu_event(|app, event| {
-        if event.id().as_ref() == "settings" {
-            show_settings_window(app);
-        }
+    app.on_menu_event(|app, event| match event.id().as_ref() {
+        "settings" => show_settings_window(app),
+        _ => {}
     });
     Ok(())
 }

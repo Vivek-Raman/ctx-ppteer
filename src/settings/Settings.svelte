@@ -120,7 +120,7 @@
     <section class="settings-group">
       <div class="group-heading">
         <h2>Viewer</h2>
-        <p>Control how the status window stays visible.</p>
+        <p>Keep the viewer above other windows.</p>
       </div>
       <label class="checkbox"
         ><input
